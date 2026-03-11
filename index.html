@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eloquence — Concept App</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=DM+Mono:wght@300;400;500&display=swap');
+
+  :root {
+    --black: #0A0A0A;
+    --off: #111111;
+    --card: #161616;
+    --border: #252525;
+    --gold: #C8A96E;
+    --gold-dim: #8A6E3E;
+    --white: #F0ECE6;
+    --muted: #7A7068;
+    --green: #4CAF7D;
+    --red: #E05252;
+    --blue: #5B8FD6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--black);
+    color: var(--white);
+    font-family: 'DM Mono', monospace;
+    font-weight: 300;
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* HEADER */
+  header {
+    padding: 60px 64px 48px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .logo {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 52px;
+    font-weight: 300;
+    letter-spacing: -1px;
+    color: var(--white);
+  }
+
+  .logo span {
+    color: var(--gold);
+  }
+
+  .logo-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  .client-badge {
+    text-align: right;
+  }
+
+  .client-badge .name {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--gold);
+    letter-spacing: 1px;
+  }
+
+  .client-badge .sub {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  /* INTRO */
+  .intro {
+    padding: 64px 64px 40px;
+    max-width: 860px;
+  }
+
+  .intro h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 32px;
+    font-weight: 300;
+    font-style: italic;
+    color: var(--white);
+    margin-bottom: 16px;
+  }
+
+  .intro p {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 2;
+    max-width: 680px;
+  }
+
+  /* MODULE TABS */
+  .tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 64px;
+    border-bottom: 1px solid var(--border);
+    margin-top: 8px;
+  }
+
+  .tab {
+    padding: 16px 32px;
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+  }
+
+  .tab:hover { color: var(--white); }
+  .tab.active {
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* GRID */
+  .grid {
+    display: grid;
+    gap: 1px;
+    background: var(--border);
+    margin: 0;
+  }
+
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .cell {
+    background: var(--off);
+    padding: 40px 48px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cell::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--gold);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .cell:hover::before { opacity: 1; }
+
+  .cell-num {
+    font-size: 10px;
+    color: var(--gold-dim);
+    letter-spacing: 3px;
+    margin-bottom: 20px;
+    display: block;
+  }
+
+  .cell h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--white);
+    margin-bottom: 14px;
+    line-height: 1.3;
+  }
+
+  .cell p {
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.9;
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 16px;
+  }
+
+  .tag {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    font-size: 9.5px;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    border-radius: 2px;
+  }
+
+  .tag.highlight {
+    border-color: var(--gold-dim);
+    color: var(--gold);
+  }
+
+  /* SCHEMA / FLOW */
+  .flow-section {
+    padding: 56px 64px;
+    background: var(--off);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-size: 9px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 32px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .flow-step {
+    flex: 1;
+    min-width: 160px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 24px 20px;
+    position: relative;
+  }
+
+  .flow-step + .flow-step {
+    border-left: none;
+  }
+
+  .flow-step::after {
+    content: '→';
+    position: absolute;
+    right: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--gold);
+    font-size: 16px;
+    z-index: 10;
+    background: var(--card);
+    padding: 0 4px;
+  }
+
+  .flow-step:last-child::after { display: none; }
+
+  .flow-step .step-num {
+    font-size: 9px;
+    color: var(--gold-dim);
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+  }
+
+  .flow-step .step-title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 16px;
+    color: var(--white);
+    margin-bottom: 8px;
+  }
+
+  .flow-step .step-desc {
+    font-size: 10.5px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  .step-icon {
+    font-size: 20px;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  /* INDICATORS */
+  .indicators {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-top: 1px solid var(--border);
+  }
+
+  .indicator {
+    background: var(--off);
+    padding: 32px 36px;
+    text-align: center;
+  }
+
+  .indicator .value {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 48px;
+    font-weight: 300;
+    color: var(--gold);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+
+  .indicator .label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* SCORE DISPLAY */
+  .score-demo {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 24px;
+    margin-top: 20px;
+  }
+
+  .score-bar-wrap {
+    margin: 10px 0;
+  }
+
+  .score-label-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .score-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .score-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1.5s ease;
+  }
+
+  .fill-green { background: var(--green); }
+  .fill-gold { background: var(--gold); }
+  .fill-blue { background: var(--blue); }
+  .fill-red { background: var(--red); }
+
+  /* ARCHITECTURE */
+  .arch-section {
+    padding: 56px 64px;
+    background: var(--black);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 2px 1fr 2px 1fr;
+    gap: 32px;
+    align-items: start;
+    margin-top: 32px;
+  }
+
+  .arch-divider {
+    width: 2px;
+    background: var(--border);
+    min-height: 200px;
+    align-self: stretch;
+  }
+
+  .arch-col h4 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--gold);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .arch-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .arch-item:last-child { border: none; }
+
+  .arch-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--gold-dim);
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+
+  .arch-item-text {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .arch-item-title {
+    color: var(--white);
+    font-size: 11.5px;
+    font-weight: 500;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  /* MSG TYPES */
+  .msg-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .msg-card {
+    background: var(--card);
+    padding: 28px 32px;
+  }
+
+  .msg-type {
+    font-size: 9px;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 2px;
+  }
+
+  .type-prospect { background: rgba(91,143,214,0.15); color: var(--blue); }
+  .type-connu { background: rgba(200,169,110,0.15); color: var(--gold); }
+  .type-client { background: rgba(76,175,125,0.15); color: var(--green); }
+  .type-devis { background: rgba(224,82,82,0.15); color: var(--red); }
+
+  .msg-card h4 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 17px;
+    color: var(--white);
+    margin-bottom: 10px;
+  }
+
+  .msg-card p {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  .msg-example {
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--off);
+    border-left: 2px solid var(--gold-dim);
+    font-size: 10.5px;
+    color: var(--white);
+    line-height: 1.7;
+    font-style: italic;
+  }
+
+  /* FOOTER */
+  footer {
+    padding: 40px 64px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  footer .version {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  footer .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--green);
+    letter-spacing: 1px;
+  }
+
+  .dot-live {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.3); }
+  }
+
+  /* RESPONSIVE FIXES */
+  @media (max-width: 900px) {
+    header { padding: 32px; flex-direction: column; align-items: flex-start; gap: 20px; }
+    .intro { padding: 32px; }
+    .tabs { padding: 0 32px; }
+    .flow-section, .arch-section { padding: 40px 32px; }
+    .cell { padding: 28px 32px; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .arch-grid { grid-template-columns: 1fr; }
+    .arch-divider { display: none; }
+    .indicators { grid-template-columns: 1fr 1fr; }
+    footer { padding: 32px; flex-direction: column; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Élo<span>quence</span></div>
+    <div class="logo-sub">Intelligence Commerciale — v1.0 Concept</div>
+  </div>
+  <div class="client-badge">
+    <div class="name">Scénographie France</div>
+    <div class="sub">Application Mobile — Antigravity</div>
+  </div>
+</header>
+
+<div class="intro">
+  <h2>Une IA au service de votre développement commercial.</h2>
+  <p>Eloquence est une application mobile pensée exclusivement pour Scénographie France. Elle articule deux modules complémentaires : un assistant IA d'analyse des réunions et de conseil commercial, et un moteur de prospection intelligente qui identifie, qualifie et adresse automatiquement vos futurs clients.</p>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('module1', this)">MODULE 01 — RÉUNION & CONSEIL</button>
+  <button class="tab" onclick="switchTab('module2', this)">MODULE 02 — PROSPECTION IA</button>
+  <button class="tab" onclick="switchTab('archi', this)">ARCHITECTURE TECHNIQUE</button>
+</div>
+
+<!-- MODULE 1 -->
+<div id="module1" class="tab-content active">
+
+  <div class="flow-section">
+    <div class="section-label">Flux d'analyse — Réunion ou fichier audio</div>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="step-icon">🎙</span>
+        <div class="step-num">ÉTAPE 01</div>
+        <div class="step-title">Capture audio</div>
+        <div class="step-desc">Enregistrement live de la réunion ou import d'un fichier audio (MP3, WAV, M4A). L'app enregistre en arrière-plan.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">✍️</span>
+        <div class="step-num">ÉTAPE 02</div>
+        <div class="step-title">Transcription</div>
+        <div class="step-desc">Retranscription automatique via Whisper (OpenAI) avec identification des interlocuteurs.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">🧠</span>
+        <div class="step-num">ÉTAPE 03</div>
+        <div class="step-title">Analyse IA</div>
+        <div class="step-desc">Le modèle extrait : demandes du prospect, points de friction, objections, besoins implicites et signaux d'intérêt.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">🎨</span>
+        <div class="step-num">ÉTAPE 04</div>
+        <div class="step-title">Solutions Scéno</div>
+        <div class="step-desc">L'IA associe les besoins aux offres de Scénographie France : stand, scéno événementielle, pop-up, exposition, révélation auto…</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">📊</span>
+        <div class="step-num">ÉTAPE 05</div>
+        <div class="step-title">Rapport & Score</div>
+        <div class="step-desc">Rapport complet avec scoring de la réunion, conseils actionnables et prochaine action recommandée.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-3" style="background:var(--border);">
+    <div class="cell">
+      <span class="cell-num">F — 01</span>
+      <h3>Écoute & Transcription Live</h3>
+      <p>L'app enregistre une réunion ou importe un fichier audio. Transcription automatique avec diarisation (qui parle ?). Tout reste confidentiel et stocké localement ou sur votre cloud privé.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Whisper API</span>
+        <span class="tag">Diarisation</span>
+        <span class="tag">Live & Import</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 02</span>
+      <h3>Extraction des Besoins Prospect</h3>
+      <p>L'IA détecte automatiquement : le contexte métier du prospect, son budget implicite, l'urgence du projet, les décideurs mentionnés, et les objections formulées.</p>
+      <div class="tag-list">
+        <span class="tag highlight">NLP</span>
+        <span class="tag">Intent Detection</span>
+        <span class="tag">Budget Signals</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 03</span>
+      <h3>Recommandation d'Offre</h3>
+      <p>En fonction des besoins détectés, l'IA propose les prestations adaptées de Scénographie France : conception de stand, scénographie événementielle, pop-up store luxe, révélation véhicule, exposition muséographique…</p>
+      <div class="tag-list">
+        <span class="tag highlight">Mapping offres</span>
+        <span class="tag">Context-aware</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 04</span>
+      <h3>Score de Réunion</h3>
+      <p>Un indicateur visuel synthétise la qualité de l'échange : engagement prospect, clarté de la demande, probabilité de conversion, niveau de confiance établi. Avec des conseils pour la prochaine étape.</p>
+      <div class="score-demo">
+        <div class="score-bar-wrap">
+          <div class="score-label-row"><span>Engagement prospect</span><span style="color:var(--green)">84%</span></div>
+          <div class="score-bar"><div class="score-fill fill-green" style="width:84%"></div></div>
+        </div>
+        <div class="score-bar-wrap">
+          <div class="score-label-row"><span>Clarté du besoin</span><span style="color:var(--gold)">67%</span></div>
+          <div class="score-bar"><div class="score-fill fill-gold" style="width:67%"></div></div>
+        </div>
+        <div class="score-bar-wrap">
+          <div class="score-label-row"><span>Probabilité conversion</span><span style="color:var(--blue)">71%</span></div>
+          <div class="score-bar"><div class="score-fill fill-blue" style="width:71%"></div></div>
+        </div>
+        <div class="score-bar-wrap">
+          <div class="score-label-row"><span>Objections détectées</span><span style="color:var(--red)">2</span></div>
+          <div class="score-bar"><div class="score-fill fill-red" style="width:30%"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 05</span>
+      <h3>Conseils Post-Réunion</h3>
+      <p>L'IA rédige un plan d'action : relance à J+3, argument à envoyer, point de friction à adresser en priorité, question à poser au prochain contact, format de devis recommandé.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Action Plan</span>
+        <span class="tag">Follow-up auto</span>
+        <span class="tag">Objection Handling</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 06</span>
+      <h3>Résumé & Historique</h3>
+      <p>Chaque réunion est archivée avec sa fiche : prospect, résumé en 5 points, offres recommandées, score, et lien avec les contacts CRM. Consultable hors ligne.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Archive</span>
+        <span class="tag">CRM Sync</span>
+        <span class="tag">Offline</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="indicators">
+    <div class="indicator"><div class="value">~3'</div><div class="label">Analyse post-réunion</div></div>
+    <div class="indicator"><div class="value">5</div><div class="label">Indicateurs de score</div></div>
+    <div class="indicator"><div class="value">12+</div><div class="label">Offres Scéno mappées</div></div>
+    <div class="indicator"><div class="value">100%</div><div class="label">Confidentiel & privé</div></div>
+  </div>
+
+</div>
+
+<!-- MODULE 2 -->
+<div id="module2" class="tab-content">
+
+  <div class="flow-section">
+    <div class="section-label">Flux de prospection intelligente</div>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="step-icon">🔎</span>
+        <div class="step-num">ÉTAPE 01</div>
+        <div class="step-title">Veille Salons</div>
+        <div class="step-desc">Détection des 50–100 prochains salons professionnels (Space, Batimat, Paris Motor Show, Viva Tech…) avec dates, thématiques et exposants.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">🏆</span>
+        <div class="step-num">ÉTAPE 02</div>
+        <div class="step-title">Anniversaires Entreprises</div>
+        <div class="step-desc">L'IA détecte les entreprises qui fêteront un anniversaire décennal (10, 20, 30, 50 ans) dans 2 ans — fenêtre idéale pour proposer une scéno événementielle.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">🚗</span>
+        <div class="step-num">ÉTAPE 03</div>
+        <div class="step-title">Sorties Véhicules</div>
+        <div class="step-desc">Veille auto : nouvelles sorties de modèles (Renault, BYD, Peugeot…) pour anticiper des besoins en révélation ou scénographie automobile.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">👤</span>
+        <div class="step-num">ÉTAPE 04</div>
+        <div class="step-title">Enrichissement Contact</div>
+        <div class="step-desc">Recherche automatique des contacts clés : LinkedIn, email, téléphone. Score de confiance sur chaque donnée trouvée.</div>
+      </div>
+      <div class="flow-step">
+        <span class="step-icon">✉️</span>
+        <div class="step-num">ÉTAPE 05</div>
+        <div class="step-title">Message Personnalisé</div>
+        <div class="step-desc">Génération automatique d'un message adapté au contexte, à la relation et à la solution identifiée. Prêt à envoyer sur LinkedIn, email ou SMS.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-3" style="background:var(--border);">
+    <div class="cell">
+      <span class="cell-num">F — 07</span>
+      <h3>Radar Salons Professionnels</h3>
+      <p>L'IA scan en continu les agendas de salons en France et à l'international. Pour chaque salon, elle identifie les exposants susceptibles d'avoir besoin d'un stand ou d'une scénographie. Filtrables par secteur, date, taille.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Web Scraping</span>
+        <span class="tag">Filtres secteur</span>
+        <span class="tag">Agenda 12 mois</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 08</span>
+      <h3>Détecteur d'Anniversaires</h3>
+      <p>Recherche des entreprises dont l'anniversaire décennal (10, 20, 30, 50, 100 ans) approche dans les 2 ans. Ces entreprises cherchent souvent à marquer le coup avec un événement de prestige — terrain idéal pour Scénographie France.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Signaux d'achat</span>
+        <span class="tag">Anticipation 2 ans</span>
+        <span class="tag">Dizaines ciblées</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 09</span>
+      <h3>Veille Automotive</h3>
+      <p>Suivi des calendriers de lancement de nouveaux modèles automobiles. Anticipation des besoins en révélation de véhicules, stands de présentation, showroom éphémère. Ciblage des marques avec historique Scéno (Renault, Alpine, BYD, DS…).</p>
+      <div class="tag-list">
+        <span class="tag highlight">Automotive</span>
+        <span class="tag">Révélation véhicule</span>
+        <span class="tag">Showroom éphémère</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 10</span>
+      <h3>Enrichissement Contact Multi-Source</h3>
+      <p>Pour chaque prospect identifié, l'IA retrouve automatiquement le bon interlocuteur : directeur marketing, responsable événementiel, directeur comm'. Recherche sur LinkedIn, bases email, pages entreprise.</p>
+      <div class="tag-list">
+        <span class="tag highlight">LinkedIn</span>
+        <span class="tag">Email finder</span>
+        <span class="tag">Score fiabilité</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 11</span>
+      <h3>CRM Prospect Intégré</h3>
+      <p>Chaque prospect est géré dans un mini-CRM : statut (à contacter / devis en cours / client actif / en pause), historique des interactions, relances programmées, et pipeline visuel.</p>
+      <div class="tag-list">
+        <span class="tag highlight">Pipeline</span>
+        <span class="tag">Statuts dynamiques</span>
+        <span class="tag">Rappels auto</span>
+      </div>
+    </div>
+    <div class="cell">
+      <span class="cell-num">F — 12</span>
+      <h3>Messages Pré-générés Contextuels</h3>
+      <p>L'IA rédige un message différent selon la relation avec le contact et l'opportunité détectée. Prêt à envoyer en un tap depuis l'app.</p>
+      <div class="tag-list">
+        <span class="tag highlight">GPT-4</span>
+        <span class="tag">LinkedIn DM</span>
+        <span class="tag">Email</span>
+        <span class="tag">SMS</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 48px 64px; background: var(--off); border-top: 1px solid var(--border);">
+    <div class="section-label">Types de messages générés</div>
+    <div class="msg-grid">
+      <div class="msg-card">
+        <span class="msg-type type-prospect">Nouveau prospect</span>
+        <h4>Prise de contact froide</h4>
+        <p>Le prospect ne vous connaît pas. Le message contextualise l'opportunité (salon, anniversaire, lancement) et présente Scénographie France de façon percutante.</p>
+        <div class="msg-example">"Bonjour [Prénom], j'ai vu que [Entreprise] exposera à [Salon] en mars — nous avons conçu les stands de [Réf client]. Je serais ravi d'échanger sur votre vision pour cet événement."</div>
+      </div>
+      <div class="msg-card">
+        <span class="msg-type type-connu">Connaissance</span>
+        <h4>Relance chaleuruse</h4>
+        <p>Vous vous connaissez mais n'avez pas encore travaillé ensemble. Le message est plus direct, fait référence à un échange passé et propose une valeur concrète.</p>
+        <div class="msg-example">"Bonjour [Prénom], suite à notre échange de l'an dernier — j'ai pensé à vous en voyant l'annonce du [Salon]. On a justement un concept qui colle parfaitement à votre positionnement."</div>
+      </div>
+      <div class="msg-card">
+        <span class="msg-type type-client">Client existant</span>
+        <h4>Upsell & fidélisation</h4>
+        <p>Le prospect a déjà travaillé avec Scénographie France. Le message valorise la relation, fait référence au projet commun et ouvre sur une nouvelle opportunité.</p>
+        <div class="msg-example">"Bonjour [Prénom], j'espère que [Projet passé] a bien porté ses fruits. On a suivi le lancement de [Nouveau modèle] — ça nous a tout de suite inspiré quelques idées pour vous."</div>
+      </div>
+      <div class="msg-card" style="grid-column: span 3">
+        <span class="msg-type type-devis">Devis en cours</span>
+        <h4>Relance devis</h4>
+        <p>Un devis a été envoyé mais aucune réponse. Le message relance subtilement sans pression, en ajoutant un élément de valeur ou une urgence contextuelle (salon proche, disponibilité limitée).</p>
+        <div class="msg-example">"Bonjour [Prénom], je reviens vers vous concernant notre proposition pour [Projet]. [Salon] approche et nos équipes se calendrisent — je voulais m'assurer que notre offre correspondait bien à vos attentes."</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ARCHITECTURE -->
+<div id="archi" class="tab-content">
+  <div class="arch-section">
+    <div class="section-label">Stack technique recommandé</div>
+    <div class="arch-grid">
+      <div class="arch-col">
+        <h4>Frontend Mobile</h4>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">React Native (Expo)</span>
+            iOS & Android depuis une seule base de code. Parfait pour Antigravity.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Offline-first</span>
+            Réunions et fiches prospects accessibles sans connexion.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Push Notifications</span>
+            Alertes : salon détecté, anniversaire dans 2 ans, relance à faire.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Background Recording</span>
+            Enregistrement audio en tâche de fond pendant la réunion.
+          </div>
+        </div>
+      </div>
+
+      <div class="arch-divider"></div>
+
+      <div class="arch-col">
+        <h4>Backend & IA</h4>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">OpenAI Whisper</span>
+            Transcription audio haute précision, multilingue.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">GPT-4o / Claude</span>
+            Analyse sémantique, extraction d'intention, rédaction de messages.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Node.js API</span>
+            Backend léger orchestrant tous les appels IA et données externes.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Supabase / PostgreSQL</span>
+            Base de données prospects, historique réunions, CRM.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Cron Jobs</span>
+            Veille automatique : salons, anniversaires, sorties auto toutes les 24h.
+          </div>
+        </div>
+      </div>
+
+      <div class="arch-divider"></div>
+
+      <div class="arch-col">
+        <h4>Sources de données</h4>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">LinkedIn Sales Navigator API</span>
+            Enrichissement contact, recherche décideurs.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Hunter.io / Apollo</span>
+            Emails et téléphones professionnels.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Pappers / Infogreffe API</span>
+            Date de création des entreprises → calcul anniversaires décennaux.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Salons.fr / EventsEye</span>
+            Calendrier des salons professionnels en France et Europe.
+          </div>
+        </div>
+        <div class="arch-item">
+          <div class="arch-dot"></div>
+          <div class="arch-item-text">
+            <span class="arch-item-title">Flux RSS auto & web search</span>
+            Détection des nouvelles sorties de véhicules en temps réel.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section" style="background:var(--black)">
+    <div class="section-label">Données contextuelles Scénographie France intégrées</div>
+    <div class="grid grid-3" style="background:var(--border)">
+      <div class="cell">
+        <span class="cell-num">OFFRES</span>
+        <h3>Catalogue Prestations</h3>
+        <p>Stands immersifs, scénographie événementielle, pop-up luxe, exposition muséographique, révélation automobile, soirées de gala, conventions d'entreprise. L'IA connaît chaque offre et ses contextes d'application.</p>
+      </div>
+      <div class="cell">
+        <span class="cell-num">REFS</span>
+        <h3>Références Clients</h3>
+        <p>Renault, Alpine, BYD, DS Automobiles, E.Leclerc, Groupama, Vieilles Charrues, Paris 2024, Stade Rennais, Westfield… L'IA peut citer des références pertinentes selon le secteur du prospect.</p>
+      </div>
+      <div class="cell">
+        <span class="cell-num">SAVOIR</span>
+        <h3>Expertise Métier</h3>
+        <p>14 ans d'expérience, +1200 projets. L'IA est formée sur le vocabulaire scénographique (architecture éphémère, muséographie, ingénierie émotionnelle) pour des recommandations crédibles et précises.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="version">ELOQUENCE — CONCEPT V1.0 — SCÉNOGRAPHIE FRANCE × ANTIGRAVITY</div>
+  <div class="status"><div class="dot-live"></div>Prêt pour développement</div>
+</footer>
+
+<script>
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>
