@@ -1,0 +1,4 @@
+ALTER TABLE opportunites ADD COLUMN IF NOT EXISTS secteur TEXT;
+ALTER TABLE opportunites ADD COLUMN IF NOT EXISTS contact_data JSONB;
+ALTER TABLE opportunites ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'NOUVEAU';
+ALTER TABLE opportunites ADD CONSTRAINT opportunites_nom_key UNIQUE (nom);
