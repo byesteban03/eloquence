@@ -12,14 +12,10 @@ app.post('/search', async (req, res) => {
   const { company, titles } = req.body
   const cookie = process.env.LINKEDIN_COOKIE
 
-  console.log('🔍 Recherche reçue pour:', company)
-  console.log('Cookie présent:', !!cookie)
-
-  if (!cookie) return res.status(401).json({ error: 'Cookie LinkedIn manquant' })
+  console.log('🔍 Recherche pour:', company)
 
   let browser
   try {
-    console.log('🚀 Lancement Chromium...')
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -33,36 +29,46 @@ app.post('/search', async (req, res) => {
     }])
 
     const page = await context.newPage()
-    const contacts = []
-    const searchTitles = titles || ['directeur communication']
+    const query = encodeURIComponent(`${titles[0]} ${company}`)
+    await page.goto(`https://www.linkedin.com/search/results/people/?keywords=${query}`)
+    await page.waitForTimeout(4000)
 
-    for (const title of searchTitles.slice(0, 1)) {
-      const query = encodeURIComponent(`${title} ${company}`)
-      const url = `https://www.linkedin.com/search/results/people/?keywords=${query}`
-      console.log('📄 Navigation vers:', url)
-      await page.goto(url)
-      await page.waitForTimeout(4000)
-      console.log('📍 URL actuelle:', page.url())
+    // Dump tous les sélecteurs disponibles pour debug
+    const debug = await page.evaluate(() => {
+      const allLinks = document.querySelectorAll('a[href*="/in/"]')
+      const allSpans = document.querySelectorAll('span[aria-hidden="true"]')
+      return {
+        links: Array.from(allLinks).slice(0, 5).map(a => ({
+          href: a.href,
+          text: a.innerText?.trim()
+        })),
+        spans: Array.from(allSpans).slice(0, 10).map(s => s.innerText?.trim()),
+        bodyClasses: document.body.className
+      }
+    })
 
-      const html = await page.content()
-      console.log('HTML length:', html.length)
+    console.log('Links trouvés:', JSON.stringify(debug.links))
+    console.log('Spans:', JSON.stringify(debug.spans))
 
-      const results = await page.evaluate(() => {
-        const cards = document.querySelectorAll('.entity-result__item')
-        console.log('Cards trouvées:', cards.length)
-        return Array.from(cards).slice(0, 3).map(card => ({
-          nom: card.querySelector('.entity-result__title-text a')?.innerText?.trim(),
-          titre: card.querySelector('.entity-result__primary-subtitle')?.innerText?.trim(),
-          linkedin_url: card.querySelector('a.app-aware-link')?.href,
-        }))
+    // Extraction avec nouveaux sélecteurs
+    const contacts = await page.evaluate(() => {
+      const results = []
+      const links = document.querySelectorAll('a[href*="linkedin.com/in/"]')
+      links.forEach(link => {
+        const name = link.querySelector('span[aria-hidden="true"]')?.innerText?.trim()
+        if (name && !results.find(r => r.linkedin_url === link.href)) {
+          results.push({
+            nom: name,
+            linkedin_url: link.href,
+            titre: link.closest('li')?.querySelector('.entity-result__primary-subtitle, [data-anonymize="job-title"]')?.innerText?.trim()
+          })
+        }
       })
+      return results.slice(0, 3)
+    })
 
-      console.log('Résultats bruts:', JSON.stringify(results))
-      contacts.push(...results.filter(r => r.nom))
-    }
-
+    console.log('Contacts extraits:', JSON.stringify(contacts))
     await browser.close()
-    console.log('✅ Contacts trouvés:', contacts.length)
     res.json({ success: true, contacts })
 
   } catch (e) {
