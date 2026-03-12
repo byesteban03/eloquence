@@ -2,7 +2,8 @@
   "name": "linkedin-scraper",
   "version": "1.0.0",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "npx playwright install chromium --with-deps"
   },
   "dependencies": {
     "playwright": "^1.40.0",
