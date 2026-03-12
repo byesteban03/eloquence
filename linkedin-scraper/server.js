@@ -12,13 +12,17 @@ app.post('/search', async (req, res) => {
   const { company, titles } = req.body
   const cookie = process.env.LINKEDIN_COOKIE
 
+  console.log('🔍 Recherche reçue pour:', company)
+  console.log('Cookie présent:', !!cookie)
+
   if (!cookie) return res.status(401).json({ error: 'Cookie LinkedIn manquant' })
 
   let browser
   try {
+    console.log('🚀 Lancement Chromium...')
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
     })
 
     await context.addCookies([{
@@ -30,33 +34,39 @@ app.post('/search', async (req, res) => {
 
     const page = await context.newPage()
     const contacts = []
-    const searchTitles = titles || ['directeur communication', 'responsable evenementiel', 'directeur marketing']
+    const searchTitles = titles || ['directeur communication']
 
-    for (const title of searchTitles.slice(0, 2)) {
-      await page.waitForTimeout(2000 + Math.random() * 2000)
+    for (const title of searchTitles.slice(0, 1)) {
       const query = encodeURIComponent(`${title} ${company}`)
-      await page.goto(`https://www.linkedin.com/search/results/people/?keywords=${query}`)
-      await page.waitForTimeout(3000)
+      const url = `https://www.linkedin.com/search/results/people/?keywords=${query}`
+      console.log('📄 Navigation vers:', url)
+      await page.goto(url)
+      await page.waitForTimeout(4000)
+      console.log('📍 URL actuelle:', page.url())
+
+      const html = await page.content()
+      console.log('HTML length:', html.length)
 
       const results = await page.evaluate(() => {
         const cards = document.querySelectorAll('.entity-result__item')
+        console.log('Cards trouvées:', cards.length)
         return Array.from(cards).slice(0, 3).map(card => ({
           nom: card.querySelector('.entity-result__title-text a')?.innerText?.trim(),
           titre: card.querySelector('.entity-result__primary-subtitle')?.innerText?.trim(),
-          entreprise: card.querySelector('.entity-result__secondary-subtitle')?.innerText?.trim(),
           linkedin_url: card.querySelector('a.app-aware-link')?.href,
-          photo_url: card.querySelector('img')?.src
         }))
       })
 
-      contacts.push(...results.filter(r => r.nom && r.linkedin_url))
+      console.log('Résultats bruts:', JSON.stringify(results))
+      contacts.push(...results.filter(r => r.nom))
     }
 
     await browser.close()
-    const unique = contacts.filter((c, i, arr) => arr.findIndex(x => x.linkedin_url === c.linkedin_url) === i)
-    res.json({ success: true, contacts: unique.slice(0, 3) })
+    console.log('✅ Contacts trouvés:', contacts.length)
+    res.json({ success: true, contacts })
 
   } catch (e) {
+    console.error('❌ Erreur:', e.message)
     if (browser) await browser.close()
     res.status(500).json({ error: e.message })
   }
