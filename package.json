@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@expo-google-fonts/outfit": "^0.4.3",
+    "@expo/vector-icons": "^15.1.1",
     "@react-navigation/bottom-tabs": "^7.15.5",
     "@react-navigation/native": "^7.1.33",
     "@supabase/supabase-js": "^2.99.0",
@@ -20,7 +21,9 @@
     "expo-font": "^55.0.4",
     "expo-linear-gradient": "^55.0.8",
     "expo-notifications": "~55.0.11",
+    "expo-router": "~55.0.0",
     "expo-status-bar": "~55.0.4",
+    "lucide-react-native": "^0.577.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.2",

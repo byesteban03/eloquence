@@ -15,12 +15,18 @@ serve(async (req) => {
 
   try {
     console.log('Attempting to parse request body as JSON.');
-    const { audioBase64, duration } = await req.json()
+    let { audioBase64, duration } = await req.json()
     console.log('Body received. Audio base64 length:', audioBase64?.length ?? 'UNDEFINED', 'Duration:', duration);
     
     if (!audioBase64) {
       console.error('Validation Error: Audio data (audioBase64) is missing from the request body.');
       throw new Error('Audio data is missing');
+    }
+
+    // Strip data URL prefix if present
+    if (audioBase64.includes(';base64,')) {
+      console.log('Stripping data URL prefix from audioBase64.');
+      audioBase64 = audioBase64.split(';base64,').pop();
     }
 
     console.log('Starting base64 to Blob conversion.');
@@ -30,11 +36,13 @@ serve(async (req) => {
     for (let i = 0; i < binaryStr.length; i++) {
       bytes[i] = binaryStr.charCodeAt(i);
     }
-    const audioBlob = new Blob([bytes], { type: 'audio/webm' });
+    
+    // Default to m4a if we don't know, but try to be generic
+    const audioBlob = new Blob([bytes], { type: 'audio/mpeg' });
     console.log('Base64 to Blob conversion complete. Blob size:', audioBlob.size, 'bytes.');
 
     const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.webm');
+    formData.append('file', audioBlob, 'audio.m4a'); // OpenAI usually handles m4a well
     formData.append('model', 'whisper-1');
     console.log('FormData created with audio file and model.');
 

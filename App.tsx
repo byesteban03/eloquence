@@ -262,10 +262,12 @@ function AnalyseScreen({
       
       // ── Step 1: Upload audio to Supabase Storage ──────────────────
       let audioUrl: string | null = null;
+      let cleanBase64: string | undefined | null = audioBase64; // Declare cleanBase64 here
       if (audioBase64) {
         try {
           console.log('[AnalyseScreen] Uploading audio to storage...');
-          const binaryStr = atob(audioBase64);
+          cleanBase64 = audioBase64.includes(';base64,') ? audioBase64.split(';base64,').pop() : audioBase64;
+          const binaryStr = atob(cleanBase64!);
           const bytes = new Uint8Array(binaryStr.length);
           for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
           const timestamp = Date.now();
@@ -1638,8 +1640,8 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
 
         try {
           const orgName = getOrgName(opp.name, opp.cat);
-          const response = await supabase.functions.invoke('search-contact', { body: { organizationName: orgName } });
-          const contacts = response.data?.contacts || [];
+          const response = await supabase.functions.invoke('scrape-linkedin-contacts', { body: { organizationName: orgName } });
+          const contacts = response.data || [];
           
           if (contacts.length > 0) {
             currentContact = contacts[0];
