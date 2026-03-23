@@ -11,6 +11,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,6 +53,7 @@ function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
           #map { height: 100vh; width: 100vw; background: #0E0E0F; }
           .leaflet-container { background: #0E0E0F !important; }
           .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+          .leaflet-control-attribution { display: none; }
         </style>
       </head>
       <body>
@@ -59,9 +61,7 @@ function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
         <script>
           const map = L.map('map', { zoomControl: false }).setView([46.6033, 1.8883], 5);
           
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
-          }).addTo(map);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
           const markers = ${JSON.stringify(markers)};
           const group = L.featureGroup();
@@ -75,17 +75,19 @@ function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
 
           markers.forEach(m => {
             const color = colors[m.qualif] || colors.default;
-            const marker = L.circleMarker([m.lat, m.lng], {
-              radius: 6,
-              fillColor: color,
-              color: '#fff',
-              weight: 2,
-              opacity: 1,
-              fillOpacity: 0.9
-            }).addTo(map);
-            
-            marker.bindPopup('<b>' + m.nom + '</b><br>' + m.qualif);
-            group.addLayer(marker);
+            if (m.lat && m.lng) {
+              const marker = L.circleMarker([m.lat, m.lng], {
+                radius: 6,
+                fillColor: color,
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.9
+              }).addTo(map);
+              
+              marker.bindPopup('<b>' + m.nom + '</b><br>' + m.qualif);
+              group.addLayer(marker);
+            }
           });
 
           if (markers.length > 0) {
@@ -95,6 +97,18 @@ function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
       </body>
     </html>
   `;
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.mapContainer}>
+        <iframe 
+          srcDoc={mapHtml}
+          style={{ width: '100%', height: '100%', border: 'none', borderRadius: 12 }}
+          title="Prospect Map"
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.mapContainer}>

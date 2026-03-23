@@ -416,18 +416,15 @@ function OppDetailSheet({
       const financesArray = result.finances || [];
       const CA = financesArray.length > 0 ? financesArray[0].chiffre_affaires : null;
 
-      // Score bonus
+      // Scoring & Détails
       let score_bonus = 0;
+      const score_bonus_details: string[] = [];
+      
       const effLower = effectifs.toLowerCase();
       let eVal = 0;
       if (effLower.includes('500') || effLower.includes('1 000') || effLower.includes('2 000')) eVal = 500;
       else if (effLower.includes('100') || effLower.includes('200') || effLower.includes('250')) eVal = 100;
       else if (effLower.includes('50')) eVal = 50;
-      if (eVal >= 500) score_bonus += 10;
-      else if (eVal >= 100) score_bonus += 5;
-      if (CA !== null && CA > 50000000) score_bonus += 10;
-      else if (CA !== null && CA >= 10000000) score_bonus += 5;
-      if (dirigeants.length > 0) score_bonus += 5;
       score_bonus = Math.min(score_bonus, 25);
 
       const enrichissement: EntrepriseData = {

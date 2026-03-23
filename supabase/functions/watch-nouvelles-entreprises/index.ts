@@ -7,7 +7,8 @@ const corsHeaders = {
 };
 
 // Secteurs NAF à surveiller (événementiel, luxe, auto, comm)
-const SECTEURS_CIBLES = ['7311', '9001', '9002', '4511', '4610', '7010'];
+const SECTEURS_CIBLES = ['90.01Z', '90.02Z', '73.11Z', '45.11Z', '32.12Z'];
+const DAYS_LOOKBACK = 60; // Plus large pour le test initial
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -24,7 +25,7 @@ serve(async (req) => {
     // Rechercher les entreprises créées dans les 30 derniers jours
     for (const secteur of SECTEURS_CIBLES) {
       const dateMin = new Date();
-      dateMin.setDate(dateMin.getDate() - 30);
+      dateMin.setDate(dateMin.getDate() - DAYS_LOOKBACK);
       const dateMinStr = dateMin.toISOString().split('T')[0];
       
       const response = await fetch(
