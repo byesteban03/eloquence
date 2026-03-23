@@ -107,6 +107,34 @@ serve(async (req) => {
         .upsert(opportunitesToInsert, { onConflict: 'nom' })
         
       if (error) throw error;
+
+      // --- ÉTAPE 1 : Enrichissement batch (zéro attente) ---
+      // On récupère les opportunités qui n'ont pas encore d'enrichissement
+      const { data: oppsToEnrich } = await supabase
+        .from('opportunites')
+        .select('id, nom')
+        .is('enrichissement', null)
+        .limit(20);
+
+      if (oppsToEnrich && oppsToEnrich.length > 0) {
+        console.log(`[refresh-opportunites] Batch enrichment for ${oppsToEnrich.length} opportunities`);
+        // Enrichir en parallèle par batch de 5 pour éviter le rate limiting
+        const batchSize = 5;
+        for (let i = 0; i < oppsToEnrich.length; i += batchSize) {
+          const batch = oppsToEnrich.slice(i, i + batchSize);
+          await Promise.all(
+            batch.map(opp =>
+              supabase.functions.invoke('enrich-entreprise', {
+                body: { opportunite_id: opp.id, nom_entreprise: opp.nom }
+              })
+            )
+          );
+          // Pause 300ms entre chaque batch pour respecter le rate limit API
+          if (i + batchSize < oppsToEnrich.length) {
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+      }
     }
 
     return new Response(JSON.stringify({ 

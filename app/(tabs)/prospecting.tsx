@@ -36,6 +36,11 @@ interface EntrepriseData {
   dirigeants: { nom: string; prenom: string; qualite: string }[];
   chiffre_affaires: number | null;
   score_bonus: number;
+  siren?: string;
+  siret_siege?: string;
+  nombre_etablissements?: number;
+  score_bonus_details?: string[];
+  found?: boolean;
 }
 
 type OppType  = 'salon' | 'anniversaire' | 'auto' | string;
@@ -279,6 +284,7 @@ function OppDetailSheet({
   const [entrepriseData, setEntrepriseData] = useState<EntrepriseData | null>(null);
   const [loadingEntreprise, setLoadingEntreprise] = useState(false);
   const [entrepriseFound, setEntrepriseFound] = useState(true);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const [toastVisible, setToastVisible] = useState(false);
   const toastAnim = useRef(new Animated.Value(-100)).current;
@@ -532,7 +538,9 @@ function OppDetailSheet({
                 </View>
               ) : entrepriseData ? (
                 <View style={[styles.contactCard, { gap: 6 }]}>
-                  <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary }}>🏢  {entrepriseData.nom_officiel}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary }}>🏢  {entrepriseData.nom_officiel}</Text>
+                  </View>
                   <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>📍  {entrepriseData.adresse}</Text>
                   <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>👥  {entrepriseData.effectifs}</Text>
                   {entrepriseData.code_naf || entrepriseData.secteur ? (
@@ -541,6 +549,79 @@ function OppDetailSheet({
                   {entrepriseData.chiffre_affaires && (
                     <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>💰  CA : {(entrepriseData.chiffre_affaires / 1000000).toFixed(1)} M€</Text>
                   )}
+
+                  {/* SIREN / SIRET */}
+                  {entrepriseData.siren && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary }}>
+                        SIREN : {entrepriseData.siren.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}
+                      </Text>
+                      <TouchableOpacity 
+                        onPress={async () => {
+                          await Clipboard.setStringAsync(entrepriseData.siren!);
+                          setCopiedField('siren');
+                          Haptics.selectionAsync();
+                          setTimeout(() => setCopiedField(null), 1500);
+                        }}
+                      >
+                        <Ionicons 
+                          name={copiedField === 'siren' ? 'checkmark' : 'copy-outline'} 
+                          size={14} 
+                          color={copiedField === 'siren' ? Colors.success : Colors.textTertiary} 
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {entrepriseData.siret_siege && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary }}>
+                        SIRET : {entrepriseData.siret_siege.replace(/(\d{3})(\d{3})(\d{3})(\d{5})/, '$1 $2 $3 $4')}
+                      </Text>
+                      <TouchableOpacity 
+                        onPress={async () => {
+                          await Clipboard.setStringAsync(entrepriseData.siret_siege!);
+                          setCopiedField('siret');
+                          Haptics.selectionAsync();
+                          setTimeout(() => setCopiedField(null), 1500);
+                        }}
+                      >
+                        <Ionicons 
+                          name={copiedField === 'siret' ? 'checkmark' : 'copy-outline'} 
+                          size={14} 
+                          color={copiedField === 'siret' ? Colors.success : Colors.textTertiary} 
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Badge Établissements */}
+                  {entrepriseData.nombre_etablissements && entrepriseData.nombre_etablissements > 1 && (
+                    <View style={{ 
+                      marginTop: Spacing.sm, 
+                      padding: Spacing.sm, 
+                      borderRadius: Radius.md, 
+                      backgroundColor: Colors.accentMuted + '15',
+                      borderWidth: 1,
+                      borderColor: Colors.accentMuted,
+                      gap: 2
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="business-outline" size={16} color={Colors.accent} />
+                        <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.sm, color: Colors.accent }}>
+                          🏢 {entrepriseData.nombre_etablissements} établissements
+                        </Text>
+                        {entrepriseData.nombre_etablissements > 10 && (
+                          <View style={{ backgroundColor: Colors.successMuted + '33', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, color: Colors.success, fontFamily: 'Outfit_600SemiBold' }}>🔥 SIGNAL FORT</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textSecondary, fontStyle: 'italic' }}>
+                        Signal commercial fort — potentiellement {entrepriseData.nombre_etablissements} sites à équiper
+                      </Text>
+                    </View>
+                  )}
+
                   {entrepriseData.dirigeants && entrepriseData.dirigeants.length > 0 && (
                     <View style={{ marginTop: Spacing.sm }}>
                       <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.xs, color: Colors.textTertiary, marginBottom: 4 }}>DIRIGEANTS</Text>

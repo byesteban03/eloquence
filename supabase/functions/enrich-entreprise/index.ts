@@ -6,6 +6,141 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const NOISE_WORDS = [
+  'salon', 'festival', 'forum', 'congrès', 'congress', 'expo', 
+  'exposition', 'foire', 'show', 'awards', 'summit', 'week',
+  'journées', 'rencontres', 'championship', 'grand prix', 'concours',
+  'de', 'du', 'la', 'le', 'les', 'des', 'et', 'en', 'pour', 'internationale', 'international'
+];
+
+async function searchEntreprise(nomEntreprise: string) {
+  // PASSE 1 : nom exact
+  const pass1 = await fetch(
+    `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nomEntreprise)}&per_page=3`
+  );
+  const data1 = await pass1.json();
+  
+  if (data1.results?.length > 0) {
+    // Vérifier la pertinence : le nom retourné doit ressembler au nom cherché
+    const firstWord = nomEntreprise.toLowerCase().split(' ')[0];
+    const bestMatch = data1.results.find((r: any) => 
+      r.nom_complet.toLowerCase().includes(firstWord) || 
+      nomEntreprise.toLowerCase().includes(r.nom_complet.toLowerCase().split(' ')[0])
+    );
+    if (bestMatch) return bestMatch;
+  }
+
+  // PASSE 2 : extraire le mot-clé principal (retirer les noise words)
+  const words = nomEntreprise.split(/[\s']+/);
+  const keywords = words.filter(w => 
+    !NOISE_WORDS.includes(w.toLowerCase()) && w.length > 3
+  );
+  
+  if (keywords.length === 0) return data1.results?.[0] ?? null;
+  
+  const cleanQuery = keywords.slice(0, 2).join(' ');
+  console.log(`[enrich] Pass 2 avec query nettoyée: "${cleanQuery}"`);
+  
+  const pass2 = await fetch(
+    `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(cleanQuery)}&per_page=3`
+  );
+  const data2 = await pass2.json();
+  
+  return data2.results?.[0] ?? data1.results?.[0] ?? null;
+}
+
+async function enrichFinances(siren: string) {
+  const PAPPERS_API_KEY = Deno.env.get('PAPPERS_API_KEY');
+  if (!PAPPERS_API_KEY) return null;
+  
+  try {
+    const response = await fetch(
+      `https://api.pappers.fr/v2/entreprise?siren=${siren}&api_token=${PAPPERS_API_KEY}&chiffres_cles=true`
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    
+    // Extraire les 3 derniers exercices
+    const exercices = (data.finances || []).slice(0, 3).map((f: any) => ({
+      annee: f.annee,
+      chiffre_affaires: f.chiffre_affaires,
+      resultat_net: f.resultat_net,
+      effectifs: f.effectif
+    }));
+    
+    return {
+      chiffre_affaires_dernier: exercices?.[0]?.chiffre_affaires ?? null,
+      resultat_net_dernier: exercices?.[0]?.resultat_net ?? null,
+      historique_finances: exercices ?? []
+    };
+  } catch (e) {
+    console.warn(`[enrich] Pappers error for ${siren}:`, e.message);
+    return null;
+  }
+}
+
+function calculerScoreBonus(enrichissement: any): { score: number; details: string[] } {
+  let score = 0;
+  const details: string[] = [];
+
+  // Effectifs - Tranches INSEE
+  const effectifsMap: Record<string, number> = {
+    'NN': 0, '00': 0, '01': 2, '02': 3, '03': 5,
+    '11': 5, '12': 5, '21': 8, '22': 8,
+    '31': 10, '32': 10, '41': 12, '42': 12,
+    '51': 15, '52': 15, '53': 15
+  };
+  const tranche = enrichissement.tranche_effectif || 'NN';
+  const effectifsScore = effectifsMap[tranche] ?? 0;
+  if (effectifsScore > 0) {
+    score += effectifsScore;
+    details.push(`+${effectifsScore} effectifs`);
+  }
+
+  // Chiffre d'affaires
+  const ca = enrichissement.chiffre_affaires;
+  if (ca > 50_000_000) {
+    score += 15; details.push('+15 CA > 50M€');
+  } else if (ca > 10_000_000) {
+    score += 10; details.push('+10 CA > 10M€');
+  } else if (ca > 1_000_000) {
+    score += 5; details.push('+5 CA > 1M€');
+  }
+
+  // Secteur NAF favorable
+  const SECTEURS_FAVORABLES = [
+    '73', // Publicité et études de marché
+    '90', // Arts, spectacles
+    '82', // Activités administratives
+    '45', // Commerce auto
+    '46', // Commerce de gros
+    '47', // Commerce de détail
+    '55', // Hébergement
+    '56', // Restauration
+    '70', // Conseil de gestion
+    '71', // Ingénierie
+  ];
+  const codeNaf = enrichissement.code_naf?.substring(0, 2);
+  if (SECTEURS_FAVORABLES.includes(codeNaf)) {
+    score += 15; details.push('+15 secteur favorable');
+  }
+
+  // Dirigeants identifiés
+  if (enrichissement.dirigeants?.length > 0) {
+    score += 5; details.push('+5 dirigeants identifiés');
+  }
+
+  // Établissements multiples
+  const nbEt = enrichissement.nombre_etablissements || 1;
+  if (nbEt > 10) {
+    score += 10; details.push('+10 multi-établissements');
+  } else if (nbEt > 3) {
+    score += 5; details.push('+5 plusieurs établissements');
+  }
+
+  return { score: Math.min(score, 30), details };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -45,19 +180,10 @@ serve(async (req) => {
       });
     }
 
-    // 2. Appel API data.gouv.fr
-    const API_URL = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(nom_entreprise)}&per_page=1`;
-    let gouvData;
-    try {
-      const res = await fetch(API_URL);
-      gouvData = await res.json();
-    } catch (e) {
-      return new Response(JSON.stringify({ found: false, error: "API indisponible" }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // 2. Recherche multi-passe
+    const result = await searchEntreprise(nom_entreprise);
 
-    if (!gouvData?.results || gouvData.results.length === 0) {
+    if (!result) {
       // Enregistrer que c'est empty pour éviter appels futurs
       await supabaseClient.from('opportunites').update({ enrichissement: { found: false } }).eq('id', opportunite_id);
       return new Response(JSON.stringify({ found: false }), {
@@ -65,9 +191,7 @@ serve(async (req) => {
       });
     }
 
-    const result = gouvData.results[0];
-    
-    // Extractions
+    // Extractions de base
     const nom_officiel = result.nom_complet || "";
     const s = result.siege || {};
     const adresse = [s.adresse_ligne_1, s.code_postal, s.libelle_commune].filter(Boolean).join(", ");
@@ -79,55 +203,46 @@ serve(async (req) => {
       prenom: d.prenoms,
       qualite: d.qualite
     }));
-    const financesArray = result.finances || [];
-    const CA = financesArray.length > 0 ? financesArray[0].chiffre_affaires : null;
-
-    // 3. Score bonus
-    let score_bonus = 0;
     
-    // Parsing effectifs
-    const effLower = effectifs.toLowerCase();
+    // 3. Enrichissement Pappers (finances)
+    const pappersData = await enrichFinances(result.siren);
     
-    // Affinement effectif
-    let eVal = 0;
-    if (effLower.includes('500') || effLower.includes('1 000') || effLower.includes('2 000') || effLower.includes('5 000') || effLower.includes('10 000')) eVal = 500;
-    else if (effLower.includes('100') || effLower.includes('200') || effLower.includes('250')) eVal = 100;
-    else if (effLower.includes('50 à 99')) eVal = 50;
-    
-    if (eVal >= 500) score_bonus += 10;
-    else if (eVal >= 100) score_bonus += 5;
-    
-    if (CA !== null) {
-      if (CA > 50000000) score_bonus += 10;
-      else if (CA >= 10000000) score_bonus += 5;
-    }
-
-    if (dirigeants.length > 0) score_bonus += 5;
-
-    // Plafond à 25
-    score_bonus = Math.min(score_bonus, 25);
-
-    const jsonFormate = {
+    // Données finales consolidées
+    const enrichissement: any = {
+      found: true,
+      siren: result.siren,
+      siret_siege: s.siret,
       nom_officiel,
       adresse,
       effectifs,
+      tranche_effectif: result.tranche_effectif_salarie,
       code_naf,
       secteur,
       dirigeants,
-      chiffre_affaires: CA,
-      score_bonus
+      nombre_etablissements: result.nombre_etablissements || 1,
+      chiffre_affaires: pappersData?.chiffre_affaires_dernier ?? (result.finances?.[0]?.chiffre_affaires ?? null),
+      resultat_net: pappersData?.resultat_net_dernier ?? null,
+      historique_finances: pappersData?.historique_finances ?? [],
+      latitude: s.latitude,
+      longitude: s.longitude
     };
 
-    // 4. Save
-    await supabaseClient.from('opportunites').update({ enrichissement: jsonFormate }).eq('id', opportunite_id);
+    // 4. Scoring enrichi
+    const { score, details } = calculerScoreBonus(enrichissement);
+    enrichissement.score_bonus = score;
+    enrichissement.score_bonus_details = details;
 
-    return new Response(JSON.stringify({ found: true, ...jsonFormate }), {
+    // Save
+    await supabaseClient.from('opportunites').update({ enrichissement }).eq('id', opportunite_id);
+
+    return new Response(JSON.stringify(enrichissement), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (err: any) {
     return new Response(JSON.stringify({ found: false, error: err.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500
     });
   }
 });

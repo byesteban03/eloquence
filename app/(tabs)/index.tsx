@@ -10,19 +10,102 @@ import {
   SafeAreaView,
   RefreshControl,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../lib/supabase';
 import { Colors, Spacing, Radius, FontSize, FontWeight, TypeColors, QualifColors } from '../../constants/tokens';
 
+import { WebView } from 'react-native-webview';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface ProspectMarker {
+  id: string;
+  nom: string;
+  lat: number;
+  lng: number;
+  qualif: string;
+}
 
 interface DashboardData {
   totalOpps: number;
   hotOpps: number;
   totalMeetings: number;
   recentOpps: Array<{ type: string; nom: string; detail: string; qualification: string }>;
+  markers: ProspectMarker[];
+}
+
+// ─── Map Component ──────────────────────────────────────────────────────────
+
+function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
+  const mapHtml = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>
+          body { margin: 0; padding: 0; background-color: #0E0E0F; }
+          #map { height: 100vh; width: 100vw; background: #0E0E0F; }
+          .leaflet-container { background: #0E0E0F !important; }
+          .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+        </style>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          const map = L.map('map', { zoomControl: false }).setView([46.6033, 1.8883], 5);
+          
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+          }).addTo(map);
+
+          const markers = ${JSON.stringify(markers)};
+          const group = L.featureGroup();
+
+          const colors = {
+            'Qualifié chaud': '#4ADE80',
+            'À contacter': '#3B82F6',
+            'Nouveau': '#F97316',
+            'default': '#6B7280'
+          };
+
+          markers.forEach(m => {
+            const color = colors[m.qualif] || colors.default;
+            const marker = L.circleMarker([m.lat, m.lng], {
+              radius: 6,
+              fillColor: color,
+              color: '#fff',
+              weight: 2,
+              opacity: 1,
+              fillOpacity: 0.9
+            }).addTo(map);
+            
+            marker.bindPopup('<b>' + m.nom + '</b><br>' + m.qualif);
+            group.addLayer(marker);
+          });
+
+          if (markers.length > 0) {
+            map.fitBounds(group.getBounds().pad(0.1));
+          }
+        </script>
+      </body>
+    </html>
+  `;
+
+  return (
+    <View style={styles.mapContainer}>
+      <WebView
+        originWhitelist={['*']}
+        source={{ html: mapHtml }}
+        style={{ flex: 1, backgroundColor: '#0E0E0F' }}
+        scrollEnabled={false}
+      />
+    </View>
+  );
 }
 
 // ─── Micro-animation helpers ──────────────────────────────────────────────────
@@ -171,7 +254,7 @@ export default function DashboardScreen() {
     try {
       setError(null);
       const [oppsRes, meetingsRes] = await Promise.all([
-        supabase.from('opportunites').select('type, nom, detail, qualification, score_pertinence').order('score_pertinence', { ascending: false }),
+        supabase.from('opportunites').select('id, type, nom, detail, qualification, score_pertinence, enrichissement').order('score_pertinence', { ascending: false }),
         supabase.from('reunions').select('id', { count: 'exact', head: false }),
       ]);
 
@@ -179,13 +262,27 @@ export default function DashboardScreen() {
       if (meetingsRes.error) throw meetingsRes.error;
 
       const opps = oppsRes.data ?? [];
+      
+      // Extract markers
+      const markers: ProspectMarker[] = opps
+        .filter(o => o.enrichissement && o.enrichissement.latitude && o.enrichissement.longitude)
+        .map(o => ({
+          id: o.id,
+          nom: o.nom,
+          lat: o.enrichissement.latitude,
+          lng: o.enrichissement.longitude,
+          qualif: o.qualification
+        }));
+
       setData({
         totalOpps:    opps.length,
         hotOpps:      opps.filter(o => (o.score_pertinence ?? 0) >= 80).length,
         totalMeetings: meetingsRes.data?.length ?? 0,
         recentOpps:   opps.slice(0, 3),
+        markers:      markers,
       });
     } catch (e: any) {
+      console.error('[Dashboard] error:', e);
       setError(e.message ?? 'Erreur de chargement');
     }
   }, []);
@@ -245,8 +342,40 @@ export default function DashboardScreen() {
           <KpiItem value={String(data?.hotOpps ?? 0)} label="Leads chauds" loading={loading} />
         </Animated.View>
 
-        {/* ── Modules ─────────────────────────────────────────────── */}
+        {/* ── Carte des Prospects ──────────────────────────────────── */}
         <Animated.View style={anim2}>
+          <View style={styles.sectionRow}>
+            <SectionLabel text="Carte des prospects" />
+            {data?.markers && data.markers.length > 0 && (
+              <Text style={styles.seeAll}>{data.markers.length} localisés</Text>
+            )}
+          </View>
+          {loading ? (
+            <View style={[styles.mapContainer, { backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' }]}>
+               <ActivityIndicator color={Colors.accent} />
+            </View>
+          ) : (
+            <LeafletMap markers={data?.markers ?? []} />
+          )}
+          {/* Légende */}
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, justifyContent: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <View style={[styles.mapDot, { backgroundColor: '#4ADE80' }]} />
+              <Text style={styles.mapLegendTxt}>Chaud</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <View style={[styles.mapDot, { backgroundColor: '#3B82F6' }]} />
+              <Text style={styles.mapLegendTxt}>À contacter</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <View style={[styles.mapDot, { backgroundColor: '#F97316' }]} />
+              <Text style={styles.mapLegendTxt}>Nouveau</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* ── Modules ─────────────────────────────────────────────── */}
+        <Animated.View style={anim3}>
           <SectionLabel text="Modules" />
         </Animated.View>
 
@@ -383,4 +512,9 @@ const styles = StyleSheet.create({
   emptyCard: { backgroundColor: Colors.surface, borderRadius: Radius.lg, borderWidth: 0.5, borderColor: Colors.border, padding: Spacing.xl, alignItems: 'center' },
   emptyTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textTertiary, textAlign: 'center' },
   skeletonCard: { height: 60, backgroundColor: Colors.elevated, margin: Spacing.md, borderRadius: Radius.md },
+
+  // Map
+  mapContainer: { height: 280, borderRadius: Radius.lg, borderWidth: 0.5, borderColor: Colors.border, overflow: 'hidden', backgroundColor: '#0E0E0F' },
+  mapDot: { width: 8, height: 8, borderRadius: 4 },
+  mapLegendTxt: { fontFamily: 'Outfit_400Regular', fontSize: 10, color: Colors.textTertiary },
 });
