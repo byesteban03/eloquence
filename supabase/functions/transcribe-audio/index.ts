@@ -29,54 +29,63 @@ serve(async (req) => {
       audioBase64 = audioBase64.split(';base64,').pop();
     }
 
-    console.log('Starting base64 to Blob conversion.');
-    // Convert base64 string to a Blob
-    const binaryStr = atob(audioBase64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-    
-    // Default to m4a if we don't know, but try to be generic
-    const audioBlob = new Blob([bytes], { type: 'audio/mpeg' });
-    console.log('Base64 to Blob conversion complete. Blob size:', audioBlob.size, 'bytes.');
-
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.m4a'); // OpenAI usually handles m4a well
-    formData.append('model', 'whisper-1');
-    console.log('FormData created with audio file and model.');
-
     const openAiApiKey = Deno.env.get('OPENAI_API_KEY');
-    
     if (!openAiApiKey) {
       console.error('Configuration Error: OPENAI_API_KEY environment variable is missing.');
       throw new Error('OPENAI_API_KEY environment variable is missing');
     }
 
-    console.log("Initiating audio transcription with OpenAI Whisper API. Duration:", duration, "ms.");
+    const transcribeChunk = async (base64: string, index: number) => {
+      console.log(`Transcribing chunk ${index}. Base64 length: ${base64.length}`);
+      const binaryStr = atob(base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const audioBlob = new Blob([bytes], { type: 'audio/mpeg' });
+      const formData = new FormData();
+      formData.append('file', audioBlob, `audio_${index}.m4a`);
+      formData.append('model', 'whisper-1');
 
-    const openAiApiUrl = 'https://api.openai.com/v1/audio/transcriptions';
-    console.log(`Fetching from OpenAI API: ${openAiApiUrl}`);
-    const response = await fetch(openAiApiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openAiApiKey}`,
-      },
-      body: formData,
-    });
+      const openAiApiUrl = 'https://api.openai.com/v1/audio/transcriptions';
+      const response = await fetch(openAiApiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openAiApiKey}`,
+        },
+        body: formData,
+      });
 
-    console.log(`OpenAI API response status: ${response.status}`);
-    const result = await response.json();
-    
-    if (!response.ok) {
-      console.error("OpenAI API Error Response:", JSON.stringify(result));
-      throw new Error(result.error?.message || 'Error transcribing audio');
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error?.message || `Error transcribing chunk ${index}`);
+      }
+      return result.text;
+    };
+
+    let fullTranscription = "";
+    const CHUNK_SIZE_CHARS = 20000000; // ~15MB of binary data per chunk
+
+    if (audioBase64.length > 33000000) {
+      console.log(`Large audio detected (${audioBase64.length} chars). Splitting into chunks...`);
+      const chunks: string[] = [];
+      for (let i = 0; i < audioBase64.length; i += CHUNK_SIZE_CHARS) {
+        chunks.push(audioBase64.slice(i, i + CHUNK_SIZE_CHARS));
+      }
+      console.log(`Split into ${chunks.length} chunks.`);
+
+      for (let i = 0; i < chunks.length; i++) {
+        const text = await transcribeChunk(chunks[i], i);
+        fullTranscription += (fullTranscription ? " " : "") + text;
+      }
+    } else {
+      fullTranscription = await transcribeChunk(audioBase64, 0);
     }
 
-    console.log('Transcription successful. Result text length:', result.text?.length ?? 'UNDEFINED');
+    console.log('Transcription successful. Total text length:', fullTranscription.length);
     return new Response(
       JSON.stringify({ 
-        transcription: result.text,
+        transcription: fullTranscription,
         duration: duration 
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

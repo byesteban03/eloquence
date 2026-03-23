@@ -40,7 +40,7 @@ serve(async (req) => {
       opportunitesToInsert.push({
         nom: salon.nom,
         type: 'salon',
-        detail: `${salon.date} · ${salon.lieu}`,
+        detail: `${salon.date} · ${salon.lieu}${salon.organisateur_info ? `\n🏢 Organisateur : ${salon.organisateur_info}` : ''}`,
         secteur: salon.secteur || 'Événementiel',
         created_at: now,
         qualification: 'Non qualifié',

@@ -290,6 +290,9 @@ function AnalyseScreen({
       // ── Step 2: Transcription ──────────────────────────────────────
       let transcriptionText = "";
       if (audioBase64) {
+        if (audioBase64.length > 33000000) {
+          Alert.alert("Analyse long format", "Audio long détecté — la transcription s'effectuera en plusieurs parties pour garantir la précision.");
+        }
         console.log("Envoi à transcribe-audio...");
         console.log("[AnalyseScreen] Calling transcribe-audio edge function with base64 length:", audioBase64.length);
         const res1 = await supabase.functions.invoke('transcribe-audio', {
@@ -1602,7 +1605,7 @@ const WHY: Record<OppCat, string> = {
 
 function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp; onBack: () => void; onNavigateMessages: () => void; topPad: number }) {
   const [contactData, setContactData] = useState<any>(opp.contact_data ? opp.contact_data[0] : null);
-  const [loadingContact, setLoadingContact] = useState(!opp.contact_data && opp.id);
+  const [loadingContact, setLoadingContact] = useState<boolean>(!!(!opp.contact_data && opp.id));
   const [generatedMessage, setGeneratedMessage] = useState<string | null>(null);
   const [generatingMsg, setGeneratingMsg] = useState(false);
   const [qualification, setQualification] = useState<OppQualif>(opp.qualification || 'Non qualifié');
@@ -1632,27 +1635,57 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
     async function init() {
       let currentContact = contactData;
 
-      // 1. Fetch Contact
+      // 1. Fetch Contact — LinkedIn scraper first, Apollo fallback
       if (!currentContact && opp.id) {
         setLoadingContact(true);
-        setSearchTimeout(false);
-        const timer = setTimeout(() => setSearchTimeout(true), 10000);
-
         try {
           const orgName = getOrgName(opp.name, opp.cat);
-          const response = await supabase.functions.invoke('scrape-linkedin-contacts', { body: { organizationName: orgName } });
-          const contacts = response.data || [];
-          
+
+          // ── Passe 1 : Scraper LinkedIn (Railway) ──────────────────
+          let contacts: any[] = [];
+          try {
+            const { data: liData } = await supabase.functions.invoke('scrape-linkedin-contacts', {
+              body: { organizationName: orgName }
+            });
+            if (liData?.contacts?.length > 0) contacts = liData.contacts;
+          } catch (liErr: any) {
+            console.warn('LinkedIn scraper error:', liErr.message);
+          }
+
+          // ── Passe 2 : Apollo fallback si LinkedIn vide ────────────
+          if (contacts.length === 0) {
+            console.log('LinkedIn empty → trying Apollo for:', orgName);
+            try {
+              const { data: apData } = await supabase.functions.invoke('search-contact', {
+                body: { organizationName: orgName }
+              });
+              if (apData?.contacts?.length > 0) {
+                // Apollo retourne { prenom, nom } ou { nom } — normalise
+                contacts = apData.contacts.map((c: any) => ({
+                  nom: c.nom || `${c.prenom ?? ''} ${c.last_name ?? ''}`.trim() || c.name || '',
+                  titre: c.titre || c.title || '',
+                  email: c.email || null,
+                  linkedin_url: c.linkedin_url || null,
+                }));
+              }
+            } catch (apErr: any) {
+              console.warn('Apollo error:', apErr.message);
+            }
+          }
+
           if (contacts.length > 0) {
             currentContact = contacts[0];
             setContactData(currentContact);
-            
+            // Cache en DB
             await supabase.from('opportunites').update({ contact_data: contacts }).eq('id', opp.id);
+          } else {
+            // Aucune source n'a trouvé → URLs de recherche manuelle
+            setContactData(null);
           }
         } catch (e: any) {
-          console.warn('Apollo error:', e.message);
+          console.warn('Contact fetch error:', e.message);
+          setContactData(null);
         } finally {
-          clearTimeout(timer);
           setLoadingContact(false);
         }
       }
@@ -1666,7 +1699,8 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
             if (q === 'À contacter') return 'chaleureux, informatif, propose un premier échange';
             return 'léger, très court, non-intrusif';
           };
-          const prompt = `Génère un message de prospection pour ${currentContact.prenom} ${currentContact.nom} de ${opp.name} en tant que commercial de Scénographie France. Contexte : ${opp.detail}. Ton requis : ${getTone(qualification)}. Maximum 5 lignes.`;
+          const contactName = currentContact.nom || `${currentContact.prenom ?? ''} ${currentContact.nom ?? ''}`.trim() || 'le/la responsable';
+          const prompt = `Génère un message de prospection pour ${contactName} de ${opp.name} en tant que commercial de Scénographie France. Contexte : ${opp.detail}. Ton requis : ${getTone(qualification)}. Maximum 5 lignes.`;
           const aiRes = await supabase.functions.invoke('analyse-reunion', { body: { transcription: prompt, mode: 'message' } });
           if (aiRes.data?.message) {
             setGeneratedMessage(aiRes.data.message);
@@ -1687,7 +1721,7 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
   }, []);
   
   const st       = OPP_ST[opp.status];
-  const displayContact = contactData ? `${contactData.prenom} ${contactData.nom}` : opp.contact;
+  const displayContact = contactData?.nom ? contactData.nom : opp.contact;
   const initials = (displayContact ?? 'MD').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
   const role     = contactData ? contactData.titre : (opp.contact ? (CONTACT_ROLES[opp.contact] ?? 'Responsable Marketing') : null);
   const parts    = opp.detail.split('·');
@@ -1811,9 +1845,9 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
               {loadingContact ? (
                 <View style={{ padding: 20, alignItems: 'center' }}>
                   <ActivityIndicator color={C.blue} />
-                  <Text style={{ marginTop: 10, color: C.muted, fontFamily: INTER, fontSize: 13 }}>Recherche Apollo.io en cours...</Text>
+                  <Text style={{ marginTop: 10, color: C.muted, fontFamily: INTER, fontSize: 13 }}>Recherche LinkedIn en cours...</Text>
                   {searchTimeout && (
-                    <Text style={{ marginTop: 8, color: C.red, fontFamily: INTER, fontSize: 11 }}>Recherche longue... Apollo semble lent.</Text>
+                    <Text style={{ marginTop: 8, color: C.red, fontFamily: INTER, fontSize: 11 }}>Recherche longue... le scraper LinkedIn met du temps.</Text>
                   )}
                 </View>
               ) : !contactData ? (

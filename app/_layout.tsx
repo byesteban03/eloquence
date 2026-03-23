@@ -9,7 +9,7 @@ import {
   Outfit_700Bold,
 } from '@expo-google-fonts/outfit';
 import * as SplashScreen from 'expo-splash-screen';
-import { Colors } from '../constants/theme';
+import { Colors } from '../constants/tokens';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,7 +31,7 @@ export default function RootLayout() {
 
   return (
     <>
-      <StatusBar style="dark" backgroundColor={Colors.cream} />
+      <StatusBar style="light" backgroundColor={Colors.base} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
       </Stack>

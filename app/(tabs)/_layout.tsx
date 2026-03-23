@@ -1,15 +1,7 @@
 import { Tabs } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
-import { Colors } from '../../constants/theme';
-
-// Simple SVG-like icons using View shapes
-function HomeIcon({ focused }: { focused: boolean }) {
-  return (
-    <View style={[styles.icon, focused && styles.iconActive]}>
-      <View style={[styles.dot, { backgroundColor: focused ? Colors.electric : Colors.grey400 }]} />
-    </View>
-  );
-}
+import { View, StyleSheet, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { Colors, FontSize, FontWeight } from '../../constants/tokens';
 
 export default function TabsLayout() {
   return (
@@ -17,8 +9,11 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: Colors.electric,
-        tabBarInactiveTintColor: Colors.grey400,
+        tabBarBackground: () => (
+          <BlurView tint="dark" intensity={70} style={{ flex: 1, borderRadius: 32, overflow: 'hidden' }} />
+        ),
+        tabBarActiveTintColor: Colors.textPrimary,
+        tabBarInactiveTintColor: Colors.textSecondary,
         tabBarShowLabel: true,
         tabBarLabelStyle: styles.tabLabel,
       }}
@@ -26,12 +21,12 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
+          title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
-              <View style={[styles.iconBar, { width: 16 }]} />
-              <View style={[styles.iconBar, { width: 12 }]} />
-              <View style={[styles.iconBar, { width: 14 }]} />
+            <View style={styles.iconBox}>
+              <View style={[styles.iBar, { width: 16, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
+              <View style={[styles.iBar, { width: 11, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
+              <View style={[styles.iBar, { width: 14, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
             </View>
           ),
         }}
@@ -41,9 +36,9 @@ export default function TabsLayout() {
         options={{
           title: 'Réunions',
           tabBarIcon: ({ focused }) => (
-            <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
-              <View style={[styles.iconCircle, { borderColor: focused ? Colors.electric : Colors.grey400 }]} />
-              <View style={[styles.iconBarH, { backgroundColor: focused ? Colors.electric : Colors.grey400 }]} />
+            <View style={styles.iconBox}>
+              <View style={[styles.iCircle, { borderColor: focused ? Colors.accent : Colors.textSecondary }]} />
+              <View style={[styles.iBarH, { backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
             </View>
           ),
         }}
@@ -51,10 +46,10 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="prospecting"
         options={{
-          title: 'Prospection',
+          title: 'Prospects',
           tabBarIcon: ({ focused }) => (
-            <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
-              <View style={[styles.iconSearch, { borderColor: focused ? Colors.electric : Colors.grey400 }]} />
+            <View style={styles.iconBox}>
+              <View style={[styles.iSearch, { borderColor: focused ? Colors.accent : Colors.textSecondary }]} />
             </View>
           ),
         }}
@@ -64,8 +59,8 @@ export default function TabsLayout() {
         options={{
           title: 'Compte',
           tabBarIcon: ({ focused }) => (
-            <View style={[styles.tabIcon, focused && styles.tabIconActive]}>
-              <View style={[styles.iconAvatar, { backgroundColor: focused ? Colors.electric : Colors.grey400 }]} />
+            <View style={styles.iconBox}>
+              <View style={[styles.iAvatar, { backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
             </View>
           ),
         }}
@@ -76,59 +71,58 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: Colors.black,
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 32 : 24,
+    left: 20,
+    right: 20,
+    height: 64,
+    borderRadius: 32,
     borderTopWidth: 0,
-    height: 80,
-    paddingBottom: 16,
-    paddingTop: 10,
-    elevation: 0,
-    shadowOpacity: 0,
+    backgroundColor: 'rgba(22, 22, 24, 0.65)',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    paddingBottom: 8,
+    paddingTop: 8,
   },
   tabLabel: {
     fontFamily: 'Outfit_500Medium',
     fontSize: 10,
     letterSpacing: 0.3,
   },
-  tabIcon: {
+  iconBox: {
     width: 28,
     height: 28,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
   },
-  tabIconActive: {},
-  iconBar: {
+  iBar: {
     height: 2,
-    backgroundColor: Colors.grey400,
     borderRadius: 1,
   },
-  iconBarH: {
+  iBarH: {
     width: 12,
     height: 1.5,
     borderRadius: 1,
   },
-  iconCircle: {
+  iCircle: {
     width: 14,
     height: 14,
     borderRadius: 7,
     borderWidth: 2,
   },
-  iconSearch: {
+  iSearch: {
     width: 14,
     height: 14,
     borderRadius: 7,
     borderWidth: 2,
   },
-  iconAvatar: {
+  iAvatar: {
     width: 16,
     height: 16,
     borderRadius: 8,
-  },
-  icon: {},
-  iconActive: {},
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
   },
 });
