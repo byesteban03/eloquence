@@ -601,42 +601,86 @@ const styles = StyleSheet.create({
   planBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
 
   scrollContent: { paddingHorizontal: 20, gap: 24 },
-
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
-  },
-
-  sectionHeader: { marginBottom: 16 },
-  sectionTitle: { fontFamily: 'Outfit_700Bold', fontSize: 11, color: C.textTertiary, letterSpacing: 1 },
-  sectionSub: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textSecondary, marginTop: 4, lineHeight: 18 },
-
-  fieldRow: { marginBottom: 16 },
-  fieldLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 11, color: C.textSecondary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
-  inputWrapper: {
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.base },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 20,
+    backgroundColor: C.base,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSubtle,
+  },
+  title: {
+    fontFamily: 'Outfit_700Bold',
+    fontSize: 24,
+    color: C.textPrimary,
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 150,
+  },
+  section: {
+    marginBottom: 32,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontFamily: 'Outfit_700Bold',
+    fontSize: 13,
+    color: C.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  card: {
     backgroundColor: C.elevated,
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: C.border,
-    paddingHorizontal: 12,
+    overflow: 'hidden',
   },
-  inputWrapperFocused: { borderColor: C.accent },
-  input: {
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSubtle,
+  },
+  lastRow: {
+    borderBottomWidth: 0,
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: C.base,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  rowContent: {
     flex: 1,
-    fontFamily: 'Outfit_400Regular',
+  },
+  rowTitle: {
+    fontFamily: 'Outfit_600SemiBold',
     fontSize: 15,
     color: C.textPrimary,
-    paddingVertical: Platform.OS === 'ios' ? 14 : 10,
   },
-  eyeBtn: { padding: 8 },
-
-  divider: { height: 1, backgroundColor: C.borderSubtle, marginVertical: 4, marginBottom: 16 },
-
+  rowValue: {
+    fontFamily: 'Outfit_400Regular',
+    fontSize: 14,
+    color: C.textSecondary,
+    marginTop: 2,
+  },
   hint: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.accentMuted, padding: 10, borderRadius: 8 },
   hintTxt: { fontFamily: 'Outfit_400Regular', fontSize: 12, color: C.accent, flex: 1, lineHeight: 18 },
 
@@ -652,24 +696,21 @@ const styles = StyleSheet.create({
   limitBadge: { backgroundColor: C.accentMuted, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   limitBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 9, color: C.accent, letterSpacing: 0.5 },
 
-    itemRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingVertical: 12,
-      gap: 12,
-    },
-    signalIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 10,
-      backgroundColor: C.elevated,
-      alignItems: "center",
-      justifyContent: "center",
-      borderWidth: 1,
-      borderColor: C.border,
-    },    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: C.borderSubtle,
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+  },
+  signalIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: C.elevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: C.border,
   },
   itemTitle: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.textPrimary },
   itemSub: { fontFamily: 'Outfit_400Regular', fontSize: 10, color: C.textTertiary, letterSpacing: 0.5, marginTop: 2 },
@@ -680,6 +721,7 @@ const styles = StyleSheet.create({
   toggleLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.textPrimary },
   toggleDesc: { fontFamily: 'Outfit_400Regular', fontSize: 12, color: C.textSecondary, marginTop: 2, lineHeight: 16 },
 
+  webNote: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, backgroundColor: C.warningMuted, padding: 8, borderRadius: 6 },
   webNoteTxt: { fontFamily: 'Outfit_400Regular', fontSize: 11, color: C.warning },
 
   dangerSection: { gap: 12 },
@@ -697,7 +739,7 @@ const styles = StyleSheet.create({
   logoutBtnTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.danger },
 
   versionRow: { alignItems: 'center', marginTop: 16 },
-    versionTxt: { fontFamily: "Outfit_400Regular", fontSize: 10, color: C.textTertiary, letterSpacing: 0.5, opacity: 0.8 },
+  versionTxt: { fontFamily: 'Outfit_400Regular', fontSize: 10, color: C.textTertiary, letterSpacing: 0.5, opacity: 0.8 },
 
   saveBar: {
     position: 'absolute',
@@ -705,7 +747,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.base,
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 110 : 90, // Further increased to clear floating tab bar
+    paddingBottom: Platform.OS === 'ios' ? 110 : 90,
     borderTopWidth: 1,
     borderTopColor: C.border,
   },
