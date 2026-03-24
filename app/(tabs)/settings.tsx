@@ -579,30 +579,6 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.base },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 20,
-  },
-  headerTitle: { fontFamily: 'Outfit_700Bold', fontSize: 28, color: C.textPrimary, letterSpacing: -0.6 },
-  headerSub: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textTertiary, marginTop: 2 },
-
-  planBadge: {
-    backgroundColor: C.elevated,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  planBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
-
-  scrollContent: { paddingHorizontal: 20, gap: 24 },
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.base },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -619,6 +595,15 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: C.textPrimary,
   },
+  planBadge: {
+    backgroundColor: C.elevated,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  planBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
   scrollContent: {
     padding: 20,
     paddingBottom: 150,
