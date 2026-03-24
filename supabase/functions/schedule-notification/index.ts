@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
 }
 
 serve(async (req) => {
@@ -24,6 +25,8 @@ serve(async (req) => {
     if (!supabaseUrl || !supabaseKey) throw new Error('Missing Supabase env vars')
 
     const supabase = createClient(supabaseUrl, supabaseKey)
+    const authHeader = req.headers.get('Authorization')
+    const { data: { user } } = await supabase.auth.getUser(authHeader?.replace('Bearer ', ''))
 
     const { data, error } = await supabase
       .from('notifications_planifiees')
@@ -33,6 +36,7 @@ serve(async (req) => {
         body,
         scheduled_for,
         sent: false,
+        user_id: user?.id,
       })
       .select()
       .single()

@@ -22,8 +22,32 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { Swipeable } from 'react-native-gesture-handler';
+import Svg, { Path } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
-import { Colors, Spacing, Radius, FontSize, FontWeight, TypeColors, QualifColors, scoreStyle } from '../../constants/tokens';
+import { Colors, Spacing, Radius, FontSize, FontWeight, QualifColors } from '../../constants/tokens';
+import { usePlan } from '../../hooks/usePlan';
+import { SignalCode } from '../../constants/signaux';
+import PaywallScreen from '../paywall';
+
+// ─── Design System (Linear/Premium) ───────────────────────────────────────────
+
+const C = {
+  base: '#0E0E0F',
+  surface: '#161618',
+  elevated: '#1E1E21',
+  border: '#2A2A2E',
+  borderSubtle: '#1A1A1C',
+  textPrimary: '#F0EEE8',
+  textSecondary: '#888780',
+  textTertiary: '#555553',
+  accent: '#4F6EF7',
+  accentMuted: '#0D1A3A',
+  success: '#4ADE80',
+  successMuted: '#0A2A0F',
+  warning: '#F59E0B',
+  warningMuted: '#2A1A00',
+  premium: '#8B5CF6',
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +79,36 @@ interface Opportunite {
   qualification: OppQualif;
   score_pertinence: number;
   secteur?: string;
+  signal_code: SignalCode;
+  signal_source: string;
+  signal_date?: string;
+  signaux_croises: string[];
+  score_pertinence_v2?: number;
+  score_global_v2?: number;
+  fenetre_optimale_debut?: string;
+  fenetre_optimale_fin?: string;
+  ville?: string;
+  latitude?: number;
+  longitude?: number;
+  distance_km?: number;
+  zone_cible_id?: string;
+  enrichissement?: any;
+}
+
+interface ZoneCible {
+  id: string;
+  user_id: string;
+  nom: string;
+  type: 'ville' | 'departement' | 'region' | 'rayon';
+  code_postal?: string;
+  ville?: string;
+  departement?: string;
+  region?: string;
+  adresse_centre?: string;
+  latitude_centre?: number;
+  longitude_centre?: number;
+  rayon_km?: number;
+  active: boolean;
 }
 
 interface ContactData {
@@ -66,17 +120,25 @@ interface ContactData {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getTypeCfg(type: string) {
-  return TypeColors[type as keyof typeof TypeColors] ?? TypeColors.default;
+const QUALIF_OPTIONS: OppQualif[] = ['Nouveau', 'À contacter', 'Qualifié chaud'];
+
+function getQualifCfg(q: string) {
+  if (q === 'Qualifié chaud') return { label: 'CHAUD', color: QualifColors.hot };
+  if (q === 'À contacter')   return { label: 'À CONTACTER', color: QualifColors.contact };
+  return { label: 'NOUVEAU', color: C.textTertiary };
 }
 
-const QUALIF_OPTIONS: OppQualif[] = ['Non qualifié', 'À contacter', 'Qualifié chaud', 'Non pertinent'];
+function getScoreColor(s: number) {
+  if (s >= 80) return C.success;
+  if (s >= 50) return C.warning;
+  return C.textTertiary;
+}
 
 function nextMonday() {
   const d = new Date();
   const daysUntil = (8 - d.getDay()) % 7 || 7;
   d.setDate(d.getDate() + daysUntil);
-  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
 // ─── Micro-animation helpers ──────────────────────────────────────────────────
@@ -126,40 +188,26 @@ function SkeletonRow({ width = '100%', height = 16, marginBottom = 8 }: { width?
 
 // ─── Summary Strip ────────────────────────────────────────────────────────────
 
-function StripItem({ emoji, count, label, color, onPress }: {
-  emoji: string; count: number; label: string; color: string; onPress: () => void;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const onIn  = () => Animated.timing(scale, { toValue: 0.96, duration: 100, useNativeDriver: true }).start();
-  const onOut = () => Animated.timing(scale, { toValue: 1,    duration: 100, useNativeDriver: true }).start();
-  return (
-    <Animated.View style={[styles.stripItem, { transform: [{ scale }] }]}>
-      <Pressable onPress={onPress} onPressIn={onIn} onPressOut={onOut} style={{ alignItems: 'center', gap: 3 }}>
-        <Text style={{ fontSize: 16 }}>{emoji}</Text>
-        <Text style={[styles.stripVal, { color }]}>{count}</Text>
-        <Text style={styles.stripLabel}>{label}</Text>
-      </Pressable>
-    </Animated.View>
-  );
-}
+const KPI_ITEMS = [
+  { label: 'Détections', key: 'count' as const },
+  { label: 'Pertinents', key: 'hot' as const },
+  { label: 'Prochaine MAJ', key: 'next' as const },
+];
 
-function SummaryStrip({ opps, onFilter }: { opps: Opportunite[]; onFilter: (k: FilterKey) => void }) {
-  const salons        = opps.filter(o => o.type === 'salon').length;
-  const anniversaires = opps.filter(o => o.type === 'anniversaire').length;
-  const autos         = opps.filter(o => o.type === 'auto').length;
-
-  const items: { emoji: string; count: number; label: string; color: string; filterKey: FilterKey }[] = [
-    { emoji: '🏛', count: salons,        label: 'Salons',   color: Colors.accent,  filterKey: 'salon'        },
-    { emoji: '🎂', count: anniversaires, label: 'Anniv.',   color: Colors.warning, filterKey: 'anniversaire' },
-    { emoji: '🚗', count: autos,         label: 'Auto',     color: Colors.success, filterKey: 'auto'         },
-  ];
+function SummaryStrip({ opps }: { opps: Opportunite[] }) {
+  const hotCount = opps.filter(o => (o.score_global_v2 ?? 0) >= 80).length;
 
   return (
     <View style={styles.strip}>
-      {items.map((item, i) => (
-        <React.Fragment key={item.label}>
-          <StripItem emoji={item.emoji} count={item.count} label={item.label} color={item.color} onPress={() => onFilter(item.filterKey)} />
-          {i < items.length - 1 && <View style={styles.stripDiv} />}
+      {KPI_ITEMS.map((item, idx) => (
+        <React.Fragment key={item.key}>
+          <View style={styles.stripItem}>
+            <Text style={[styles.stripVal, { color: C.textPrimary }]}>
+              {item.key === 'count' ? opps.length : item.key === 'hot' ? hotCount : nextMonday()}
+            </Text>
+            <Text style={styles.stripLabel}>{item.label.toUpperCase()}</Text>
+          </View>
+          {idx < KPI_ITEMS.length - 1 && <View style={styles.stripDiv} />}
         </React.Fragment>
       ))}
     </View>
@@ -168,100 +216,185 @@ function SummaryStrip({ opps, onFilter }: { opps: Opportunite[]; onFilter: (k: F
 
 // ─── Filter Bar ───────────────────────────────────────────────────────────────
 
-type FilterKey = 'all' | 'salon' | 'anniversaire' | 'auto' | 'hot';
-
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: 'all',         label: 'Tous'       },
-  { key: 'hot',         label: '🔥 Chauds'  },
-  { key: 'salon',       label: '🏛 Salons'  },
-  { key: 'anniversaire',label: '🎂 Anniv.'  },
-  { key: 'auto',        label: '🚗 Auto'    },
+const SIGNAL_FILTERS = [
+  { code: 'tous', label: 'Tous' },
+  { code: 'anniversaire_entreprise', label: 'Anniversaires' },
+  { code: 'creation_entreprise', label: 'Créations' },
+  { code: 'fusion_acquisition', label: 'Fusions' },
+  { code: 'appel_offres_public', label: 'Marchés publics' },
+  { code: 'recrutement_massif', label: 'Recrutements' },
+  { code: 'permis_construire', label: 'Permis construire' },
+  { code: 'changement_dirigeant', label: 'Dirigeants' },
+  { code: 'demenagement_siege', label: 'Déménagements' },
 ];
 
-function FilterBar({ active, setActive }: { active: FilterKey; setActive: (k: FilterKey) => void }) {
+function SignalFilterBar({ active, setActive }: { active: string; setActive: (k: string) => void }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterBar}>
-      {FILTERS.map(f => (
+    <View style={styles.filterSection}>
+      <Text style={styles.filterLabel}>Signal</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        {SIGNAL_FILTERS.map(f => (
+          <TouchableOpacity
+            key={f.code}
+            style={[styles.pill, active === f.code && styles.pillActive]}
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setActive(f.code);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.pillText, active === f.code && styles.pillTextActive]}>{f.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function ZoneFilterBar({ zones, active, setActive, onAddZone }: { zones: ZoneCible[]; active: string; setActive: (id: string) => void; onAddZone: () => void }) {
+  return (
+    <View style={styles.filterSection}>
+      <Text style={styles.filterLabel}>Zone</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
         <TouchableOpacity
-          key={f.key}
-          style={[styles.pill, active === f.key && styles.pillActive]}
+          style={[styles.pill, active === 'all' && styles.pillActive]}
           onPress={() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            setActive(f.key);
+            setActive('all');
           }}
-          activeOpacity={0.8}
         >
-          <Text style={[styles.pillTxt, active === f.key && styles.pillTxtActive]}>{f.label}</Text>
+          <Text style={[styles.pillText, active === 'all' && styles.pillTextActive]}>Toutes</Text>
         </TouchableOpacity>
-      ))}
-    </ScrollView>
+        {zones.map(z => (
+          <TouchableOpacity
+            key={z.id}
+            style={[styles.pill, active === z.id && styles.pillActive]}
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setActive(z.id);
+            }}
+          >
+            <Text style={[styles.pillText, active === z.id && styles.pillTextActive]}>
+              {z.nom || z.ville || z.departement || z.region || 'France'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        <TouchableOpacity style={[styles.pill, { borderColor: C.accent }]} onPress={onAddZone}>
+          <Text style={[styles.pillText, { color: C.accent }]}>+ Ajouter</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
   );
 }
 
 // ─── Opp Card ─────────────────────────────────────────────────────────────────
 
-function OppCard({ opp, onPress, onSwipe }: { opp: Opportunite; onPress: () => void; onSwipe: (id: string, action: 'ignore' | 'hot') => void }) {
+function OppCard({ opp, onPress, onSwipe, isLocked }: { opp: Opportunite; onPress: () => void; onSwipe: (id: string, action: 'ignore' | 'hot') => void, isLocked?: boolean }) {
   const { scale, onIn, onOut } = useScalePress();
-  const cfg   = getTypeCfg(opp.type);
-  const sc    = scoreStyle(opp.score_pertinence ?? 0);
-  const qCol  = QualifColors[opp.qualification] ?? Colors.textTertiary;
-  
   const swipeRef = useRef<Swipeable>(null);
 
-  const handleSwipe = (direction: 'left' | 'right') => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onSwipe(opp.id, direction === 'left' ? 'ignore' : 'hot');
-    if (direction === 'right') {
-      swipeRef.current?.close();
-    }
+  const score = opp.score_global_v2 ?? 0;
+  const scoreLabel = score > 0 ? score.toString() : '—';
+  
+  const getScoreColor = (s: number) => {
+    if (s >= 80) return C.success;
+    if (s >= 50) return C.warning;
+    return C.textSecondary;
   };
 
-  const renderLeftActions = () => (
-    <View style={[styles.swipeAction, styles.swipeLeft]}>
-      <Ionicons name="trash-outline" size={24} color="#FFF" />
-      <Text style={styles.swipeTxt}>Ignorer</Text>
-    </View>
-  );
+  const getQualifCfg = (q: string) => {
+    switch (q) {
+      case 'Qualifié chaud': return { label: 'PRIORITAIRE', color: C.success };
+      case 'À contacter': return { label: 'À CONTACTER', color: C.warning };
+      default: return { label: 'NOUVEAU', color: C.textTertiary };
+    }
+  };
+  const qCfg = getQualifCfg(opp.qualification || 'Nouveau');
 
-  const renderRightActions = () => (
-    <View style={[styles.swipeAction, styles.swipeRight]}>
-      <Text style={{ fontSize: 24 }}>🔥</Text>
-      <Text style={styles.swipeTxt}>Chaud</Text>
-    </View>
-  );
+  const handleSwipe = (direction: 'left' | 'right') => {
+    if (isLocked) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    onSwipe(opp.id, direction === 'left' ? 'ignore' : 'hot');
+    swipeRef.current?.close();
+  };
 
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
       <Swipeable
         ref={swipeRef}
-        renderLeftActions={renderLeftActions}
-        renderRightActions={renderRightActions}
+        enabled={!isLocked}
+        renderLeftActions={() => (
+          <View style={[styles.swipeAction, { backgroundColor: '#EF4444' }]}>
+            <Text style={styles.swipeTxt}>IGNORER</Text>
+          </View>
+        )}
+        renderRightActions={() => (
+          <View style={[styles.swipeAction, { backgroundColor: C.success }]}>
+            <Text style={styles.swipeTxt}>CHAUD</Text>
+          </View>
+        )}
         onSwipeableOpen={(dir) => handleSwipe(dir as 'left' | 'right')}
-        friction={2}
-        leftThreshold={80}
-        rightThreshold={80}
       >
-        <Pressable style={[styles.card, { marginBottom: 0 }]} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress(); }} onPressIn={onIn} onPressOut={onOut}>
-        <View style={styles.cardRow}>
-          <View style={[styles.typeIcon, { backgroundColor: cfg.bg }]}>
-            <Text style={{ fontSize: 16 }}>{cfg.emoji}</Text>
+        <Pressable 
+          style={[styles.card, isLocked && styles.cardLocked]} 
+          onPress={onPress}
+          onPressIn={onIn} 
+          onPressOut={onOut}
+        >
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderLeft}>
+              <View style={[styles.qualifDot, { backgroundColor: qCfg.color }]} />
+              <Text style={[styles.qualifText, { color: qCfg.color }]}>{qCfg.label}</Text>
+            </View>
+            <View style={styles.scoreBox}>
+              <Text style={[styles.scoreValue, { color: getScoreColor(score) }]}>{scoreLabel}</Text>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardName} numberOfLines={1}>{opp.nom}</Text>
-            <Text style={styles.cardDetail} numberOfLines={1}>{opp.detail}</Text>
+
+          <View style={styles.cardBody}>
+            <Text style={styles.cardTitle} numberOfLines={1}>{opp.nom}</Text>
+            <Text style={styles.cardSubtitle} numberOfLines={2}>{opp.detail}</Text>
           </View>
-          <View style={[styles.scoreBubble, { backgroundColor: sc.bg }]}>
-            <Text style={[styles.scoreTxt, { color: sc.color }]}>{opp.score_pertinence ?? 0}</Text>
+
+          <View style={styles.cardFooter}>
+            <View style={styles.cardMetaRow}>
+              <Text style={styles.cardMetaLabel}>{opp.ville?.toUpperCase() || 'FRANCE'}</Text>
+              {opp.distance_km != null && (
+                <Text style={styles.cardMetaLabel}>· {opp.distance_km.toFixed(1)}KM</Text>
+              )}
+              {opp.signaux_croises && opp.signaux_croises.length > 1 && (
+                <View style={styles.signalBadge}>
+                  <Text style={styles.signalBadgeText}>CROISÉ</Text>
+                </View>
+              )}
+            </View>
+            
+            {isLocked && (
+              <Svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textTertiary} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M11 11H13M7 11V7C7 4.23858 9.23858 2 12 2C14.7614 2 17 4.23858 17 7V11M5 11H19V22H5V11Z" />
+              </Svg>
+            )}
           </View>
-        </View>
-        <View style={styles.cardFooter}>
-          <View style={[styles.qualifDot, { backgroundColor: qCol }]} />
-          <Text style={[styles.qualifTxt, { color: qCol }]}>{opp.qualification ?? 'Non qualifié'}</Text>
-        </View>
-      </Pressable>
+        </Pressable>
       </Swipeable>
-      <View style={{ height: Spacing.sm }} />
     </Animated.View>
+  );
+}
+
+function BannerLocked({ onPress }: { onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.banner} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.bannerContent}>
+        <Svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.warning} strokeWidth="2.5">
+          <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </Svg>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.bannerTitle}>Plan Gratuit — Limite atteinte</Text>
+          <Text style={styles.bannerSub}>Débloquez l'accès illimité et les données enrichies.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.textTertiary} />
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -277,99 +410,52 @@ function OppDetailSheet({
 }) {
   const [contact, setContact]     = useState<ContactData | null>(null);
   const [loadingContact, setLoadingContact] = useState(false);
-  const [contactSource, setContactSource]   = useState('');
   const [aiMessage, setAiMessage] = useState('');
   const [loadingMsg, setLoadingMsg] = useState(false);
   const [updatingQualif, setUpdatingQualif] = useState(false);
   const [entrepriseData, setEntrepriseData] = useState<EntrepriseData | null>(null);
   const [loadingEntreprise, setLoadingEntreprise] = useState(false);
-  const [entrepriseFound, setEntrepriseFound] = useState(true);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-
   const [toastVisible, setToastVisible] = useState(false);
   const toastAnim = useRef(new Animated.Value(-100)).current;
 
-  const showToast = () => {
+  const showToast = (txt: string) => {
     setToastVisible(true);
     Animated.sequence([
-      Animated.spring(toastAnim, { toValue: 50, useNativeDriver: true }),
-      Animated.delay(2500),
-      Animated.timing(toastAnim, { toValue: -100, duration: 250, useNativeDriver: true })
+      Animated.spring(toastAnim, { toValue: 60, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(toastAnim, { toValue: -100, duration: 300, useNativeDriver: true })
     ]).start(() => setToastVisible(false));
   };
 
-  const copyToClipboard = async () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await Clipboard.setStringAsync(aiMessage);
-    showToast();
-  };
-
-  const slideAnim = useRef(new Animated.Value(600)).current;
-  const opacityAnim = useRef(new Animated.Value(1)).current;
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        Animated.timing(opacityAnim, { toValue: 0.4, duration: 150, useNativeDriver: true }).start();
-        // @ts-ignore
-        slideAnim.setOffset(slideAnim._value);
-        slideAnim.setValue(0);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) {
-          slideAnim.setValue(gestureState.dy);
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        slideAnim.flattenOffset();
-        Animated.timing(opacityAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start();
-        if (gestureState.dy > 80 || gestureState.vy > 1) {
-          onClose();
-        } else {
-          Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 150 }).start();
-        }
-      },
-    })
-  ).current;
+  const slideAnim = useRef(new Animated.Value(800)).current;
 
   useEffect(() => {
-    if (visible) {
+    if (visible && opp) {
       setContact(null);
       setAiMessage('');
-      setContactSource('');
       setEntrepriseData(null);
-      setEntrepriseFound(true);
-      slideAnim.setValue(600);
-      slideAnim.flattenOffset();
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 150 }).start();
-      if (opp) {
-        Promise.all([searchContact(opp), enrichEntreprise(opp)]);
-      }
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 120 }).start();
+      searchContact(opp);
+      enrichEntreprise(opp);
     } else {
-      Animated.timing(slideAnim, { toValue: 600, duration: 250, useNativeDriver: true }).start();
+      Animated.timing(slideAnim, { toValue: 800, duration: 250, useNativeDriver: true }).start();
     }
   }, [visible, opp]);
 
   const searchContact = async (o: Opportunite) => {
     setLoadingContact(true);
     try {
-      const { data, error } = await supabase.functions.invoke('search-contact', {
-        body: { organizationName: o.nom }
-      });
-      if (error) throw error;
+      const { data } = await supabase.functions.invoke('search-contact', { body: { organizationName: o.nom } });
       if (data?.contacts?.length > 0) {
         const c = data.contacts[0];
         setContact({
-          nom:     c.nom ?? c.full_name ?? null,
-          poste:   c.titre ?? c.poste ?? null,
-          email:   c.email ?? null,
+          nom: c.nom ?? c.full_name ?? null,
+          poste: c.titre ?? c.poste ?? null,
+          email: c.email ?? null,
           linkedin: c.linkedin_url ?? null,
         });
-        setContactSource('Apollo');
       }
-    } catch (e) {
-      console.error('[searchContact] error:', e);
     } finally {
       setLoadingContact(false);
     }
@@ -377,73 +463,23 @@ function OppDetailSheet({
 
   const enrichEntreprise = async (o: Opportunite) => {
     setLoadingEntreprise(true);
-    setEntrepriseFound(true);
     try {
-      // 1. Vérifier le cache Supabase d'abord
-      const { data: opp } = await supabase
-        .from('opportunites')
-        .select('enrichissement')
-        .eq('id', o.id)
-        .single();
-
-      if (opp?.enrichissement && Object.keys(opp.enrichissement).length > 0) {
-        if (opp.enrichissement.found === false) {
-          setEntrepriseFound(false);
-          return;
-        }
-        setEntrepriseData(opp.enrichissement as EntrepriseData);
-        return;
-      }
-
-      // 2. Appel direct data.gouv.fr (API publique, pas de clé)
       const apiUrl = `https://recherche-entreprises.api.gouv.fr/search?q=${encodeURIComponent(o.nom)}&per_page=1`;
       const res = await fetch(apiUrl);
       const gouvData = await res.json();
-
-      if (!gouvData?.results || gouvData.results.length === 0) {
-        await supabase.from('opportunites').update({ enrichissement: { found: false } }).eq('id', o.id);
-        setEntrepriseFound(false);
-        return;
+      if (gouvData?.results?.length > 0) {
+        const r = gouvData.results[0];
+        setEntrepriseData({
+          nom_officiel: r.nom_complet || '',
+          adresse: r.siege?.adresse_ligne_1 || '',
+          effectifs: r.tranche_effectif_salarie || 'N/A',
+          code_naf: r.activite_principale || '',
+          secteur: r.libelle_activite_principale || '',
+          dirigeants: [],
+          chiffre_affaires: null,
+          score_bonus: 0,
+        });
       }
-
-      const result = gouvData.results[0];
-      const s = result.siege || {};
-      const adresse = [s.adresse_ligne_1 || s.adresse, s.code_postal, s.libelle_commune].filter(Boolean).join(', ');
-      const effectifs = result.tranche_effectif_salarie || 'Inconnu';
-      const dirigeants = (result.dirigeants || []).slice(0, 3).map((d: any) => ({
-        nom: d.nom, prenom: d.prenoms, qualite: d.qualite
-      }));
-      const financesArray = result.finances || [];
-      const CA = financesArray.length > 0 ? financesArray[0].chiffre_affaires : null;
-
-      // Scoring & Détails
-      let score_bonus = 0;
-      const score_bonus_details: string[] = [];
-      
-      const effLower = effectifs.toLowerCase();
-      let eVal = 0;
-      if (effLower.includes('500') || effLower.includes('1 000') || effLower.includes('2 000')) eVal = 500;
-      else if (effLower.includes('100') || effLower.includes('200') || effLower.includes('250')) eVal = 100;
-      else if (effLower.includes('50')) eVal = 50;
-      score_bonus = Math.min(score_bonus, 25);
-
-      const enrichissement: EntrepriseData = {
-        nom_officiel: result.nom_complet || '',
-        adresse,
-        effectifs,
-        code_naf: result.activite_principale || '',
-        secteur: result.libelle_activite_principale || result.section_activite_principale || '',
-        dirigeants,
-        chiffre_affaires: CA,
-        score_bonus,
-      };
-
-      // 3. Sauvegarder en cache
-      await supabase.from('opportunites').update({ enrichissement }).eq('id', o.id);
-      setEntrepriseData(enrichissement);
-    } catch (e) {
-      console.warn('[enrichEntreprise] non bloquant:', e);
-      setEntrepriseFound(false);
     } finally {
       setLoadingEntreprise(false);
     }
@@ -453,264 +489,99 @@ function OppDetailSheet({
     if (!opp) return;
     setLoadingMsg(true);
     try {
-      const prompt = `Génère un email de prospection B2B pour Scénographie France (agence de scénographie événementielle) à destination de ${opp.nom}.\nContexte de l'opportunité : ${opp.detail}.${contact?.nom ? `\nContact ciblé : ${contact.nom}${contact.poste ? `, ${contact.poste}` : ''}.` : ''}\nL'email doit être court, professionnel, valoriser notre expertise événementielle, et proposer un échange rapide. Signe "Esteban — Scénographie France".`;
-      const { data, error } = await supabase.functions.invoke('analyse-reunion', {
-        body: { transcription: prompt, mode: 'message' }
-      });
-      if (error) throw new Error(error.message);
-      const msg = data?.message ?? '';
-      setAiMessage(msg);
-    } catch (e) {
-      console.error('[generateMessage] error:', e);
+      const prompt = `Email de prospection court pour ${opp.nom}. Contexte: ${opp.detail}. Signe Esteban.`;
+      const { data } = await supabase.functions.invoke('analyse-reunion', { body: { transcription: prompt, mode: 'message' } });
+      setAiMessage(data?.message ?? '');
     } finally {
       setLoadingMsg(false);
     }
   };
 
-  const handleQualif = async (q: OppQualif) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    if (!opp) return;
-    setUpdatingQualif(true);
-    try {
-      await supabase.from('opportunites').update({ qualification: q }).eq('id', opp.id);
-      onQualifChange(opp.id, q);
-    } finally {
-      setUpdatingQualif(false);
-    }
-  };
-
   if (!opp) return null;
-  const cfg = getTypeCfg(opp.type);
-  const sc  = scoreStyle(opp.score_pertinence ?? 0);
 
   return (
     <Modal visible={visible} transparent animationType="none">
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
       <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
-        {/* Handle */}
-        <Animated.View {...panResponder.panHandlers} style={[styles.sheetHandleArea, { opacity: opacityAnim }]}>
-          <View style={styles.sheetHandle} />
-        </Animated.View>
-
-        {/* Nav */}
-        <View style={styles.sheetNav}>
-          <TouchableOpacity onPress={onClose} style={styles.sheetBackBtn}>
-            <Ionicons name="close" size={18} color={Colors.textSecondary} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }} />
-          <View style={[styles.scoreBubble, { backgroundColor: sc.bg }]}>
-            <Text style={[styles.scoreTxt, { color: sc.color }]}>{opp.score_pertinence ?? 0}</Text>
+        <View style={styles.sheetHandleArea}><View style={styles.sheetHandle} /></View>
+        
+        <ScrollView contentContainerStyle={styles.sheetScroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.sheetSection}>
+            <Text style={styles.sheetTitle}>{opp.nom}</Text>
+            <Text style={styles.sheetSub}>{opp.detail}</Text>
           </View>
-        </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
-          {/* Header */}
-          <View style={styles.sheetHeader}>
-            <View style={[styles.typeIcon, { backgroundColor: cfg.bg, width: 44, height: 44 }]}>
-              <Text style={{ fontSize: 20 }}>{cfg.emoji}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetTitle}>{opp.nom}</Text>
-              <Text style={styles.sheetSub}>{opp.detail}</Text>
+          <View style={styles.sheetSection}>
+            <Text style={styles.sheetSectionLabel}>Qualification</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {['Nouveau', 'À contacter', 'Qualifié chaud'].map(q => (
+                <TouchableOpacity 
+                  key={q} 
+                  style={[styles.qualifPill, opp.qualification === q && styles.pillActive]}
+                  onPress={() => onQualifChange(opp.id, q)}
+                >
+                  <Text style={[styles.qualifPillTxt, opp.qualification === q && styles.pillTextActive]}>{q}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
 
-          {/* Entreprise */}
-          {entrepriseFound && (
+          {entrepriseData && (
             <View style={styles.sheetSection}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
-                <Text style={[styles.sheetSectionLabel, { marginBottom: 0 }]}>DONNÉES ENTREPRISE</Text>
-                {entrepriseData && entrepriseData.score_bonus > 0 && (
-                  <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.sm, color: Colors.success }}>
-                    [score +{entrepriseData.score_bonus}]
-                  </Text>
-                )}
+              <Text style={styles.sheetSectionLabel}>Entreprise</Text>
+              <View style={styles.contactCard}>
+                <View style={{ gap: 4 }}>
+                  <Text style={styles.contactName}>{entrepriseData.nom_officiel}</Text>
+                  <Text style={styles.contactRole}>{entrepriseData.adresse}</Text>
+                  <Text style={styles.contactMeta}>{entrepriseData.effectifs} employés · {entrepriseData.secteur}</Text>
+                </View>
               </View>
-
-              {loadingEntreprise ? (
-                <View style={[styles.contactCard, { paddingVertical: Spacing.xl }]}>
-                  <SkeletonRow width="60%" />
-                  <SkeletonRow width="80%" />
-                  <SkeletonRow width="40%" marginBottom={0} />
-                </View>
-              ) : entrepriseData ? (
-                <View style={[styles.contactCard, { gap: 6 }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary }}>🏢  {entrepriseData.nom_officiel}</Text>
-                  </View>
-                  <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>📍  {entrepriseData.adresse}</Text>
-                  <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>👥  {entrepriseData.effectifs}</Text>
-                  {entrepriseData.code_naf || entrepriseData.secteur ? (
-                    <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>🏭  {entrepriseData.code_naf}{entrepriseData.code_naf && entrepriseData.secteur ? ' — ' : ''}{entrepriseData.secteur}</Text>
-                  ) : null}
-                  {entrepriseData.chiffre_affaires && (
-                    <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>💰  CA : {(entrepriseData.chiffre_affaires / 1000000).toFixed(1)} M€</Text>
-                  )}
-
-                  {/* SIREN / SIRET */}
-                  {entrepriseData.siren && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary }}>
-                        SIREN : {entrepriseData.siren.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}
-                      </Text>
-                      <TouchableOpacity 
-                        onPress={async () => {
-                          await Clipboard.setStringAsync(entrepriseData.siren!);
-                          setCopiedField('siren');
-                          Haptics.selectionAsync();
-                          setTimeout(() => setCopiedField(null), 1500);
-                        }}
-                      >
-                        <Ionicons 
-                          name={copiedField === 'siren' ? 'checkmark' : 'copy-outline'} 
-                          size={14} 
-                          color={copiedField === 'siren' ? Colors.success : Colors.textTertiary} 
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  {entrepriseData.siret_siege && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary }}>
-                        SIRET : {entrepriseData.siret_siege.replace(/(\d{3})(\d{3})(\d{3})(\d{5})/, '$1 $2 $3 $4')}
-                      </Text>
-                      <TouchableOpacity 
-                        onPress={async () => {
-                          await Clipboard.setStringAsync(entrepriseData.siret_siege!);
-                          setCopiedField('siret');
-                          Haptics.selectionAsync();
-                          setTimeout(() => setCopiedField(null), 1500);
-                        }}
-                      >
-                        <Ionicons 
-                          name={copiedField === 'siret' ? 'checkmark' : 'copy-outline'} 
-                          size={14} 
-                          color={copiedField === 'siret' ? Colors.success : Colors.textTertiary} 
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Badge Établissements */}
-                  {entrepriseData.nombre_etablissements && entrepriseData.nombre_etablissements > 1 && (
-                    <View style={{ 
-                      marginTop: Spacing.sm, 
-                      padding: Spacing.sm, 
-                      borderRadius: Radius.md, 
-                      backgroundColor: Colors.accentMuted + '15',
-                      borderWidth: 1,
-                      borderColor: Colors.accentMuted,
-                      gap: 2
-                    }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="business-outline" size={16} color={Colors.accent} />
-                        <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.sm, color: Colors.accent }}>
-                          🏢 {entrepriseData.nombre_etablissements} établissements
-                        </Text>
-                        {entrepriseData.nombre_etablissements > 10 && (
-                          <View style={{ backgroundColor: Colors.successMuted + '33', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                            <Text style={{ fontSize: 10, color: Colors.success, fontFamily: 'Outfit_600SemiBold' }}>🔥 SIGNAL FORT</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textSecondary, fontStyle: 'italic' }}>
-                        Signal commercial fort — potentiellement {entrepriseData.nombre_etablissements} sites à équiper
-                      </Text>
-                    </View>
-                  )}
-
-                  {entrepriseData.dirigeants && entrepriseData.dirigeants.length > 0 && (
-                    <View style={{ marginTop: Spacing.sm }}>
-                      <Text style={{ fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.xs, color: Colors.textTertiary, marginBottom: 4 }}>DIRIGEANTS</Text>
-                      {entrepriseData.dirigeants.map((d, i) => (
-                        <Text key={i} style={{ fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary }}>• {d.prenom} {d.nom} {d.qualite ? `— ${d.qualite}` : ''}</Text>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              ) : null}
             </View>
           )}
 
-          {/* Qualification */}
           <View style={styles.sheetSection}>
-            <Text style={styles.sheetSectionLabel}>QUALIFICATION</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {QUALIF_OPTIONS.map(q => {
-                const qCol = QualifColors[q] ?? Colors.textTertiary;
-                const isActive = opp.qualification === q;
-                return (
-                  <TouchableOpacity
-                    key={q}
-                    style={[styles.qualifPill, isActive && { backgroundColor: qCol + '22', borderColor: qCol }]}
-                    onPress={() => handleQualif(q)}
-                    disabled={updatingQualif}
-                  >
-                    <Text style={[styles.qualifPillTxt, isActive && { color: qCol }]}>{q}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* Contact */}
-          <View style={styles.sheetSection}>
-            <Text style={styles.sheetSectionLabel}>CONTACT {contactSource ? `· ${contactSource}` : ''}</Text>
-            {loadingContact ? (
-              <View style={[styles.contactCard, { flexDirection: 'row', gap: 8, alignItems: 'center' }]}>
-                <ActivityIndicator size="small" color={Colors.accent} />
-                <Text style={{ color: Colors.textSecondary, fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm }}>
-                  Recherche LinkedIn en cours...
-                </Text>
-              </View>
-            ) : contact ? (
+            <Text style={styles.sheetSectionLabel}>Contact LinkedIn</Text>
+            {loadingContact ? <ActivityIndicator color={C.accent} /> : contact ? (
               <View style={styles.contactCard}>
                 <View style={styles.contactAvatar}>
-                  <Text style={styles.contactInitials}>
-                    {(contact.nom ?? '?').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                  </Text>
+                   <Text style={styles.contactInitials}>{contact.nom?.split(' ').map(n=>n[0]).join('')}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.contactName}>{contact.nom}</Text>
-                  {contact.poste  && <Text style={styles.contactRole}>{contact.poste}</Text>}
-                  {contact.email  && <Text style={styles.contactMeta}>{contact.email}</Text>}
+                  <Text style={styles.contactRole}>{contact.poste}</Text>
                 </View>
               </View>
-            ) : (
-              <Text style={styles.contactNone}>Aucun contact trouvé</Text>
-            )}
+            ) : <Text style={styles.emptyTxt}>Aucun contact trouvé</Text>}
           </View>
 
-          {/* AI Message */}
           <View style={styles.sheetSection}>
-            <Text style={styles.sheetSectionLabel}>MESSAGE IA</Text>
+            <Text style={styles.sheetSectionLabel}>Prospection IA</Text>
             {aiMessage ? (
-              <View style={[styles.messageCard, { position: 'relative' }]}>
+              <View style={styles.messageCard}>
+                <Text style={styles.messageTxt}>{aiMessage}</Text>
                 <TouchableOpacity 
-                   style={{ position: 'absolute', top: 12, right: 12, padding: 8, backgroundColor: Colors.surface, borderRadius: Radius.md, zIndex: 10, borderWidth: 1, borderColor: Colors.border }} 
-                   onPress={copyToClipboard}
+                  style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                  onPress={() => {
+                    Clipboard.setStringAsync(aiMessage);
+                    showToast('Copié !');
+                  }}
                 >
-                  <Ionicons name="copy-outline" size={16} color={Colors.textPrimary} />
+                  <Ionicons name="copy-outline" size={14} color={C.accent} />
+                  <Text style={{ color: C.accent, fontFamily: 'Outfit_600SemiBold', fontSize: 13 }}>Copier le message</Text>
                 </TouchableOpacity>
-                <Text style={[styles.messageTxt, { fontFamily: 'Outfit_400Regular', color: Colors.textPrimary, lineHeight: 22 }]}>{aiMessage}</Text>
               </View>
             ) : (
               <TouchableOpacity style={styles.generateBtn} onPress={generateMessage} disabled={loadingMsg}>
-                {loadingMsg
-                  ? <ActivityIndicator size="small" color={Colors.textPrimary} />
-                  : <Text style={styles.generateBtnTxt}>✨ Générer un message</Text>}
+                {loadingMsg ? <ActivityIndicator color="#FFF" /> : <Text style={styles.generateBtnTxt}>Générer l'approche</Text>}
               </TouchableOpacity>
             )}
           </View>
-
         </ScrollView>
       </Animated.View>
 
-      {/* Toast Notification */}
       {toastVisible && (
         <Animated.View style={[styles.toast, { transform: [{ translateY: toastAnim }] }]}>
-          <Ionicons name="checkmark-circle" size={20} color={Colors.success} style={{ marginRight: 8 }} />
-          <Text style={styles.toastTxt}>Email copié dans le presse-papier</Text>
+          <Text style={styles.toastTxt}>Copié dans le presse-papier</Text>
         </Animated.View>
       )}
     </Modal>
@@ -721,11 +592,17 @@ function OppDetailSheet({
 
 export default function ProspectingScreen() {
   const [opps, setOpps] = useState<Opportunite[]>([]);
+  const [zones, setZones] = useState<ZoneCible[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<FilterKey>('all');
+  const [filterType, setFilterType] = useState<string>('tous');
+  const [filterZone, setFilterZone] = useState<string>('all');
   const [selectedOpp, setSelectedOpp] = useState<Opportunite | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [paywallTrigger, setPaywallTrigger] = useState<'feature_locked' | 'manual'>('manual');
+
+  const { plan } = usePlan();
 
   const anim0 = useFadeIn(0);
   const anim1 = useFadeIn(60);
@@ -738,40 +615,56 @@ export default function ProspectingScreen() {
     }
   }, []);
 
-  const setFilterAnimated = useCallback((k: FilterKey) => {
+  const setFilterTypeAnimated = useCallback((k: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setFilter(k);
+    setFilterType(k);
   }, []);
 
-  const loadOpps = useCallback(async () => {
+  const setFilterZoneAnimated = useCallback((id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setFilterZone(id);
+  }, []);
+
+  const loadData = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('opportunites')
-        .select('*')
-        .order('score_pertinence', { ascending: false });
-      if (error) throw error;
-      setOpps(data ?? []);
+      const [oppsRes, zonesRes] = await Promise.all([
+        supabase.from('opportunites').select('*').order('score_global_v2', { ascending: false }),
+        supabase.from('zones_cibles').select('*').eq('active', true),
+      ]);
+      
+      if (oppsRes.error) throw oppsRes.error;
+      if (zonesRes.error) throw zonesRes.error;
+      
+      setOpps(oppsRes.data ?? []);
+      setZones(zonesRes.data ?? []);
     } catch (e) {
-      console.error('loadOpps error', e);
+      console.error('loadData error', e);
     }
   }, []);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await loadOpps();
+      await loadData();
       setLoading(false);
     })();
   }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadOpps();
+    await loadData();
     setRefreshing(false);
   };
 
-  const openDetail = (opp: Opportunite) => {
+  const openDetail = (opp: Opportunite, index: number) => {
+    const isLocked = plan === 'free' && index >= 10;
+    if (isLocked) {
+      setPaywallTrigger('feature_locked');
+      setShowPaywall(true);
+      return;
+    }
     setSelectedOpp(opp);
     setSheetVisible(true);
   };
@@ -793,9 +686,15 @@ export default function ProspectingScreen() {
   };
 
   const filtered = opps.filter(o => {
-    if (filter === 'all')  return true;
-    if (filter === 'hot')  return (o.score_pertinence ?? 0) >= 80;
-    return o.type === filter;
+    // Filter Type
+    let matchType = true;
+    if (filterType !== 'tous') matchType = o.signal_code === filterType;
+
+    // Filter Zone
+    let matchZone = true;
+    if (filterZone !== 'all') matchZone = o.zone_cible_id === filterZone;
+
+    return matchType && matchZone;
   });
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -823,12 +722,19 @@ export default function ProspectingScreen() {
       >
         {/* Summary Strip */}
         <Animated.View style={anim1}>
-          <SummaryStrip opps={opps} onFilter={setFilterAnimated} />
+          <SummaryStrip opps={opps} />
+          {plan === 'free' && <BannerLocked onPress={() => { setPaywallTrigger('manual'); setShowPaywall(true); }} />}
         </Animated.View>
 
-        {/* Filter Bar */}
+        {/* Filters */}
         <Animated.View style={anim1}>
-          <FilterBar active={filter} setActive={setFilterAnimated} />
+          <SignalFilterBar active={filterType} setActive={setFilterTypeAnimated} />
+          <ZoneFilterBar 
+            zones={zones} 
+            active={filterZone} 
+            setActive={setFilterZoneAnimated} 
+            onAddZone={() => {}} // TODO: Navigation vers settings
+          />
         </Animated.View>
 
         {/* List */}
@@ -842,12 +748,18 @@ export default function ProspectingScreen() {
             [0, 1, 2].map(i => <SkeletonCard key={i} />)
           ) : filtered.length === 0 ? (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyEmoji}>🔍</Text>
+              <Ionicons name="search-outline" size={40} color={C.border} style={{ marginBottom: 12 }} />
               <Text style={styles.emptyTxt}>Aucune opportunité dans ce filtre</Text>
             </View>
           ) : (
-            filtered.map(opp => (
-              <OppCard key={opp.id} opp={opp} onPress={() => openDetail(opp)} onSwipe={handleSwipeCard} />
+            filtered.map((m, i) => (
+              <OppCard 
+                key={m.id} 
+                opp={m} 
+                onPress={() => openDetail(m, i)} 
+                onSwipe={handleSwipeCard} 
+                isLocked={plan === 'free' && i >= 10}
+              />
             ))
           )}
         </Animated.View>
@@ -862,6 +774,15 @@ export default function ProspectingScreen() {
         onClose={() => setSheetVisible(false)}
         onQualifChange={handleQualifChange}
       />
+
+      {/* Paywall Modal */}
+      <Modal visible={showPaywall} animationType="slide" presentationStyle="pageSheet">
+        <PaywallScreen 
+          trigger={paywallTrigger} 
+          featureName="l'accès illimité aux opportunités" 
+          onClose={() => setShowPaywall(false)} 
+        />
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -869,7 +790,7 @@ export default function ProspectingScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.base },
+  container: { flex: 1, backgroundColor: C.base },
 
   // Header
   header: {
@@ -880,200 +801,153 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Spacing.md,
   },
-  headerTitle: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xxl, color: Colors.textPrimary, letterSpacing: -0.4 },
-  headerSub: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 3 },
+  headerTitle: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xxl, color: C.textPrimary, letterSpacing: -0.4 },
+  headerSub: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: C.textSecondary, marginTop: 3 },
   liveChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: Colors.successMuted,
-    borderWidth: 0.5, borderColor: Colors.success,
+    backgroundColor: C.successMuted,
+    borderWidth: 0.5, borderColor: C.success,
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.pill,
   },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.success },
-  liveTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.xs, color: Colors.success },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.success },
+  liveTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.xs, color: C.success },
+
+  filterSection: { gap: 10, marginBottom: 8 },
+  filterLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 11, color: C.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 2 },
+  filterRow: { gap: 8 },
 
   scroll: { paddingHorizontal: Spacing.lg, gap: Spacing.lg },
 
   // Summary Strip
   strip: {
-    backgroundColor: Colors.surface,
+    backgroundColor: C.surface,
     borderRadius: Radius.lg,
     borderWidth: 0.5,
-    borderColor: Colors.border,
+    borderColor: C.border,
     flexDirection: 'row',
     paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.md,
     alignItems: 'center',
   },
-  stripItem: { flex: 1, alignItems: 'center', gap: 3 },
-  stripVal: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xxl, letterSpacing: -0.8 },
-  stripLabel: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textSecondary },
-  stripDiv: { width: 0.5, height: 36, backgroundColor: Colors.border },
+  stripItem: { flex: 1, alignItems: 'center', gap: 4 },
+  stripVal: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xl, letterSpacing: -0.8 },
+  stripLabel: { fontFamily: 'Outfit_400Regular', fontSize: 9, color: C.textSecondary, letterSpacing: 0.5 },
+  stripDiv: { width: 0.5, height: 24, backgroundColor: C.border },
 
-  // Filter bar
-  filterBar: { gap: 8, paddingVertical: 2 },
-  pill: {
-    paddingHorizontal: Spacing.md, paddingVertical: 7,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.elevated,
-    borderWidth: 0.5, borderColor: Colors.border,
+  // Banner
+  banner: { 
+    marginTop: 12, 
+    backgroundColor: '#1C1917', 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#292524',
+    padding: 12,
   },
-  pillActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
-  pillTxt: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.sm, color: Colors.textSecondary },
-  pillTxtActive: { color: Colors.textPrimary },
-
-  // List header
-  listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: -4 },
-  listLabel: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs, color: Colors.textTertiary, letterSpacing: 0.08 },
-  listCount: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.sm, color: Colors.textSecondary },
+  bannerContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bannerTitle: { fontFamily: 'Outfit_700Bold', fontSize: 13, color: C.textPrimary },
+  bannerSub: { fontFamily: 'Outfit_400Regular', fontSize: 11, color: C.textSecondary, marginTop: 1 },
 
   // Opp card
   card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    borderWidth: 0.5,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 16,
+    marginBottom: 0,
   },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  typeIcon: { width: 38, height: 38, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  cardName: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.lg, color: Colors.textPrimary, letterSpacing: -0.2 },
-  cardDetail: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 1, opacity: 0.5 },
-  scoreBubble: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.sm },
-  scoreTxt: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.sm },
-  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -2 },
+  cardLocked: { opacity: 0.6, backgroundColor: C.elevated },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   qualifDot: { width: 6, height: 6, borderRadius: 3 },
-  qualifTxt: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs },
+  qualifText: { fontFamily: 'Outfit_700Bold', fontSize: 10, letterSpacing: 0.5 },
+  scoreBox: { 
+    backgroundColor: C.elevated, 
+    width: 32, height: 32, borderRadius: 8, 
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: C.border
+  },
+  scoreValue: { fontFamily: 'Outfit_700Bold', fontSize: 13 },
+  
+  cardBody: { marginBottom: 16 },
+  cardTitle: { fontFamily: 'Outfit_600SemiBold', fontSize: 17, color: C.textPrimary, marginBottom: 4 },
+  cardSubtitle: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textTertiary, lineHeight: 18 },
+  
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  cardMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardMetaLabel: { fontFamily: 'Outfit_500Medium', fontSize: 11, color: C.textSecondary },
+  signalBadge: { backgroundColor: C.accentMuted, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  signalBadgeText: { fontFamily: 'Outfit_700Bold', fontSize: 9, color: C.accent },
+
+  // Filter bar pills
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  pillActive: { backgroundColor: C.textPrimary, borderColor: C.textPrimary },
+  pillText: { fontFamily: 'Outfit_500Medium', fontSize: 13, color: C.textSecondary },
+  pillTextActive: { color: C.base },
+
+  // List header
+  listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  listLabel: { fontFamily: 'Outfit_500Medium', fontSize: 11, color: C.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5 },
+  listCount: { fontFamily: 'Outfit_700Bold', fontSize: 12, color: C.textSecondary },
 
   // Swipe
-  swipeAction: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 90,
-    marginBottom: Spacing.sm,
-    borderRadius: Radius.lg,
-  },
-  swipeLeft: {
-    backgroundColor: Colors.danger,
-    marginRight: Spacing.sm,
-  },
-  swipeRight: {
-    backgroundColor: Colors.success,
-    marginLeft: Spacing.sm,
-  },
-  swipeTxt: {
-    color: '#FFF',
-    fontFamily: 'Outfit_600SemiBold',
-    fontSize: 10,
-    marginTop: 4,
-  },
-
-  // Skeleton
-  skeletonCard: { height: 80, backgroundColor: Colors.surface, borderRadius: Radius.lg },
-
-  // Empty
-  emptyBox: { alignItems: 'center', paddingVertical: 40, gap: Spacing.sm },
-  emptyEmoji: { fontSize: 36 },
-  emptyTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textTertiary },
+  swipeAction: { justifyContent: 'center', alignItems: 'center', width: 80, height: '100%', borderRadius: 12 },
+  swipeTxt: { fontFamily: 'Outfit_800ExtraBold', fontSize: 10, color: '#FFF' },
 
   // Sheet
-  sheetOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
+  sheetOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.8)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    borderTopWidth: 0.5, borderColor: Colors.border,
-    maxHeight: '90%',
+    backgroundColor: C.surface,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    borderTopWidth: 1, borderColor: C.border,
+    maxHeight: '92%',
   },
-  sheetHandleArea: {
-    width: '100%', paddingVertical: Spacing.md, alignItems: 'center', justifyContent: 'center'
-  },
-  sheetHandle: {
-    width: 36, height: 4, borderRadius: 2,
-    backgroundColor: Colors.border,
-  },
-  sheetNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.border,
-  },
-  sheetBackBtn: {
-    minWidth: 44, minHeight: 44, borderRadius: Radius.pill,
-    backgroundColor: Colors.elevated,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sheetScroll: { padding: Spacing.lg, gap: Spacing.xl },
-  sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
-  sheetTitle: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xl, color: Colors.textPrimary, letterSpacing: -0.3, flex: 1 },
-  sheetSub: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 3, flex: 1 },
-  sheetSection: { gap: Spacing.sm },
-  sheetSectionLabel: {
-    fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs,
-    color: Colors.textTertiary, letterSpacing: 0.08, textTransform: 'uppercase',
-  },
-
-  toast: {
-    position: 'absolute',
-    top: 0,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.elevated,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: Radius.pill,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    zIndex: 999,
-  },
-  toastTxt: {
-    fontFamily: 'Outfit_500Medium',
-    fontSize: FontSize.sm,
-    color: Colors.textPrimary,
-  },
-
+  sheetHandleArea: { width: '100%', height: 32, alignItems: 'center', justifyContent: 'center' },
+  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: C.border },
+  sheetScroll: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 10 },
+  sheetSection: { marginBottom: 24 },
+  sheetTitle: { fontFamily: 'Outfit_700Bold', fontSize: 24, color: C.textPrimary, marginBottom: 8 },
+  sheetSub: { fontFamily: 'Outfit_400Regular', fontSize: 15, color: C.textTertiary, lineHeight: 22 },
+  sheetSectionLabel: { fontFamily: 'Outfit_700Bold', fontSize: 11, color: C.textTertiary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
+  
   // Qualif pills
-  qualifPill: {
-    paddingHorizontal: Spacing.md, paddingVertical: 7,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.elevated, borderWidth: 0.5, borderColor: Colors.border,
-  },
-  qualifPillTxt: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.sm, color: Colors.textSecondary },
+  qualifPill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  qualifPillTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: 13, color: C.textSecondary },
 
   // Contact card
-  contactCard: {
-    backgroundColor: Colors.elevated, borderRadius: Radius.md, borderWidth: 0.5, borderColor: Colors.border,
-    padding: Spacing.lg, flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-  },
-  contactAvatar: {
-    width: 42, height: 42, borderRadius: Radius.md,
-    backgroundColor: Colors.accentMuted, borderWidth: 0.5, borderColor: Colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  contactInitials: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.sm, color: Colors.accent },
-  contactName: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary },
-  contactRole: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 1 },
-  contactMeta: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary, marginTop: 2 },
-  contactNone: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textTertiary, fontStyle: 'italic' },
+  contactCard: { backgroundColor: C.elevated, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  contactAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  contactInitials: { fontFamily: 'Outfit_700Bold', fontSize: 14, color: '#FFF' },
+  contactName: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.textPrimary },
+  contactRole: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textSecondary },
+  contactMeta: { fontFamily: 'Outfit_400Regular', fontSize: 12, color: C.textTertiary },
 
   // Message
-  messageCard: {
-    backgroundColor: Colors.elevated, borderRadius: Radius.md, borderWidth: 0.5, borderColor: Colors.border, padding: Spacing.lg,
+  messageCard: { backgroundColor: C.elevated, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: C.border },
+  messageTxt: { fontFamily: 'Outfit_400Regular', fontSize: 14, color: C.textPrimary, lineHeight: 22 },
+  generateBtn: { backgroundColor: C.accent, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  generateBtnTxt: { fontFamily: 'Outfit_700Bold', fontSize: 15, color: '#FFF' },
+
+  // Empty state
+  emptyBox: { alignItems: 'center', paddingVertical: 60 },
+  emptyTxt: { fontFamily: 'Outfit_400Regular', fontSize: 14, color: C.textSecondary },
+
+  // Skeleton
+  skeletonCard: { height: 120, backgroundColor: C.surface, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
+
+  // Toast
+  toast: {
+    position: 'absolute', top: 60, alignSelf: 'center',
+    backgroundColor: C.textPrimary, paddingHorizontal: 20, paddingVertical: 12,
+    borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12,
   },
-  messageTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 20 },
-  generateBtn: {
-    backgroundColor: Colors.accent, borderRadius: Radius.md, paddingVertical: Spacing.md,
-    alignItems: 'center',
-  },
-  generateBtnTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary },
+  toastTxt: { fontFamily: 'Outfit_700Bold', fontSize: 13, color: C.base },
 });

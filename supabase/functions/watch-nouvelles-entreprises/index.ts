@@ -20,6 +20,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''; // Use service role for cron tasks
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    const authHeader = req.headers.get('Authorization')
+    const { data: { user } } = await supabase.auth.getUser(authHeader?.replace('Bearer ', ''))
+
     const resultsSummary = [];
 
     // Rechercher les entreprises créées dans les 30 derniers jours
@@ -60,7 +63,8 @@ serve(async (req) => {
             nombre_etablissements: entreprise.nombre_etablissements || 1,
             latitude: entreprise.siege?.latitude,
             longitude: entreprise.siege?.longitude
-          }
+          },
+          user_id: user?.id
         }, { onConflict: 'nom' });
 
         if (!error) {

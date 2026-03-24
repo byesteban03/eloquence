@@ -13,11 +13,39 @@ import {
   KeyboardAvoidingView,
   Alert,
   StatusBar,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSize, FontWeight } from '../../constants/tokens';
+import { supabase } from '../../lib/supabase';
+import { usePlan } from '../../hooks/usePlan';
+import PaywallScreen from '../paywall';
+import { PLANS } from '../../constants/plans';
+import { SIGNAUX_BIBLIOTHEQUE, SignalCode } from '../../constants/signaux';
+
+// ─── Design System (Linear/Premium) ───────────────────────────────────────────
+
+const C = {
+  base: '#0E0E0F',
+  surface: '#161618',
+  elevated: '#1E1E21',
+  border: '#2A2A2E',
+  borderSubtle: '#1A1A1C',
+  textPrimary: '#F0EEE8',
+  textSecondary: '#888780',
+  textTertiary: '#5E5D58',
+  accent: '#5D5DFF',
+  accentMuted: '#5D5DFF22',
+  success: '#22C55E',
+  successMuted: '#22C55E11',
+  warning: '#F59E0B',
+  warningMuted: '#F59E0B11',
+  danger: '#EF4444',
+};
 
 // ─── Storage key ──────────────────────────────────────────────────────────────
 
@@ -43,6 +71,19 @@ const DEFAULTS: Settings = {
   notifyHotLeads: false,
 };
 
+interface ZoneCible {
+  id: string;
+  nom: string;
+  type: string;
+  active: boolean;
+  code_postal?: string;
+}
+
+interface UserSignal {
+  code: string;
+  active: boolean;
+}
+
 // ─── Fade-in wrapper ──────────────────────────────────────────────────────────
 
 function FadeIn({ delay = 0, children }: { delay?: number; children: React.ReactNode }) {
@@ -62,7 +103,7 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
       {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
     </View>
   );
@@ -98,7 +139,7 @@ function FieldRow({
         />
         {secure && onToggleSecure && (
           <TouchableOpacity onPress={onToggleSecure} style={styles.eyeBtn} activeOpacity={0.7}>
-            <Text style={styles.eyeIcon}>{showSecure ? '🙈' : '👁'}</Text>
+            <Ionicons name={showSecure ? "eye-off-outline" : "eye-outline"} size={16} color={C.textTertiary} />
           </TouchableOpacity>
         )}
       </View>
@@ -122,9 +163,9 @@ function ToggleRow({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: Colors.border, true: Colors.accent + '55' }}
-        thumbColor={value ? Colors.accent : Colors.textTertiary}
-        ios_backgroundColor={Colors.border}
+        trackColor={{ false: C.border, true: C.accentMuted }}
+        thumbColor={value ? C.accent : C.textTertiary}
+        ios_backgroundColor={C.border}
       />
     </View>
   );
@@ -140,6 +181,13 @@ export default function SettingsScreen() {
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showPaywall, setShowPaywall] = useState(false);
+  
+  const [zones, setZones] = useState<ZoneCible[]>([]);
+  const [userSignaux, setUserSignaux] = useState<Record<string, boolean>>({});
+  const [loadingZones, setLoadingZones] = useState(true);
+
+  const { plan: currentPlan, loading: planLoading } = usePlan();
 
   const btnScale = useRef(new Animated.Value(1)).current;
 
@@ -148,11 +196,62 @@ export default function SettingsScreen() {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) setSettings({ ...DEFAULTS, ...JSON.parse(raw) });
+        await Promise.all([loadZones(), loadSignaux()]);
       } catch (e) {
         console.warn('[settings] Load error:', e);
       }
     })();
   }, []);
+
+  const loadZones = async () => {
+    setLoadingZones(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data } = await supabase.from('zones_cibles').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+    setZones(data || []);
+    setLoadingZones(false);
+  };
+
+  const loadSignaux = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data } = await supabase.from('types_signaux').select('*').eq('user_id', user.id);
+    const map: Record<string, boolean> = {};
+    data?.forEach(s => map[s.code] = s.active);
+    setUserSignaux(map);
+  };
+
+  const toggleZone = async (id: string, current: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setZones(prev => prev.map(z => z.id === id ? { ...z, active: !current } : z));
+    await supabase.from('zones_cibles').update({ active: !current }).eq('id', id);
+  };
+
+  const toggleSignal = async (code: string) => {
+    const current = !!userSignaux[code];
+    // Check plan limits
+    const signalDef = SIGNAUX_BIBLIOTHEQUE.find(s => s.code === code);
+    const allowed = currentPlan === 'team' || 
+                   (currentPlan === 'pro' && signalDef?.plan_minimum !== 'team') ||
+                   (currentPlan === 'free' && signalDef?.plan_minimum === 'free');
+    
+    if (!allowed && !current) {
+      setShowPaywall(true);
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setUserSignaux(prev => ({ ...prev, [code]: !current }));
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    
+    await supabase.from('types_signaux').upsert({
+      user_id: user.id,
+      code,
+      active: !current
+    }, { onConflict: 'user_id,code' });
+  };
 
   const update = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -206,8 +305,13 @@ export default function SettingsScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Réglages</Text>
-          <Text style={styles.headerSub}>Configuration de l'application</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Réglages</Text>
+            <Text style={styles.headerSub}>Configuration de l'application</Text>
+          </View>
+          <View style={styles.planBadge}>
+            <Text style={styles.planBadgeTxt}>{PLANS[currentPlan].nom.toUpperCase()}</Text>
+          </View>
         </View>
 
         <ScrollView
@@ -215,30 +319,58 @@ export default function SettingsScreen() {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {/* ⓪ Abonnement */}
+          <FadeIn delay={0}>
+            <View style={styles.card}>
+              <SectionHeader title="Abonnement" subtitle="Gérez votre plan et vos limites" />
+              <View style={[styles.planCard, currentPlan === 'pro' && styles.planCardPro, currentPlan === 'team' && styles.planCardTeam]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.planName}>{PLANS[currentPlan].nom}</Text>
+                  <Text style={styles.planStatus}>
+                    {currentPlan === 'free' ? 'Plan gratuit' : 'Abonnement actif'}
+                  </Text>
+                </View>
+                {!planLoading && (
+                  <TouchableOpacity style={styles.upgradeBtn} onPress={() => setShowPaywall(true)}>
+                    <Text style={styles.upgradeBtnTxt}>{currentPlan === 'free' ? 'Upgrade' : 'Détails'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {currentPlan === 'free' && (
+                <View style={styles.limitHint}>
+                  <Ionicons name="information-circle-outline" size={14} color={C.textTertiary} />
+                  <Text style={styles.limitHintTxt}>
+                    Vous êtes limité à 3 analyses et 10 opportunités par mois.
+                  </Text>
+                </View>
+              )}
+            </View>
+          </FadeIn>
           {/* ① Profil */}
           <FadeIn delay={0}>
             <View style={styles.card}>
               <SectionHeader
-                title="👤  Profil utilisateur"
+                title="Profil utilisateur"
                 subtitle="Utilisé pour personnaliser les emails générés par l'IA"
               />
               <FieldRow
                 label="Nom complet"
                 value={settings.fullName}
                 onChangeText={v => update('fullName', v)}
-                placeholder="Esteban Niochet"
+                placeholder="Ex: Esteban Niochet"
               />
               <View style={styles.divider} />
               <FieldRow
                 label="Signature email"
                 value={settings.emailSignature}
                 onChangeText={v => update('emailSignature', v)}
-                placeholder="Esteban — Scénographie France"
+                placeholder="Ex: Esteban — Scénographie France"
                 multiline
               />
               <View style={styles.hint}>
+                <Ionicons name="sparkles-outline" size={14} color={C.accent} />
                 <Text style={styles.hintTxt}>
-                  ℹ️  Cette signature est injectée automatiquement en fin de chaque email généré par GPT-4o.
+                  Cette signature est injectée automatiquement en fin de chaque email généré par l'IA.
                 </Text>
               </View>
             </View>
@@ -248,11 +380,12 @@ export default function SettingsScreen() {
           <FadeIn delay={60}>
             <View style={styles.card}>
               <SectionHeader
-                title="🔑  Clés API"
+                title="Clés API"
                 subtitle="Stockées uniquement sur votre appareil"
               />
               <View style={styles.warningBanner}>
-                <Text style={styles.warningTxt}>🔒 Ne partagez jamais ces clés. Elles ne sont envoyées à aucun serveur.</Text>
+                <Ionicons name="shield-checkmark-outline" size={14} color={C.warning} />
+                <Text style={styles.warningTxt}>Sécurité : Ces clés ne sont jamais transmises à nos serveurs.</Text>
               </View>
               <FieldRow label="OpenAI API Key" value={settings.openaiKey} onChangeText={v => update('openaiKey', v)}
                 placeholder="sk-proj-..." secure showSecure={showOpenai} onToggleSecure={() => setShowOpenai(p => !p)} />
@@ -261,63 +394,181 @@ export default function SettingsScreen() {
                 placeholder="api_key_..." secure showSecure={showApollo} onToggleSecure={() => setShowApollo(p => !p)} />
               <View style={styles.divider} />
               <FieldRow label="Cookie LinkedIn (li_at)" value={settings.linkedinCookie} onChangeText={v => update('linkedinCookie', v)}
-                placeholder="AQEDAREqwXYZ..." secure showSecure={showLinkedin} onToggleSecure={() => setShowLinkedin(p => !p)} />
+                placeholder="AQEDARE..." secure showSecure={showLinkedin} onToggleSecure={() => setShowLinkedin(p => !p)} />
               <TouchableOpacity
                 onPress={() => Alert.alert(
-                  'Comment trouver li_at ?',
-                  '1. Connectez-vous sur LinkedIn dans Chrome\n2. Ouvrez DevTools (F12)\n3. Application → Cookies → www.linkedin.com\n4. Copiez la valeur de "li_at"',
-                  [{ text: 'Compris' }]
+                  'Configuration LinkedIn',
+                  '1. Connectez-vous sur LinkedIn (Chrome)\n2. Inspecter → Application → Cookies\n3. Copiez la valeur de "li_at"',
+                  [{ text: 'OK' }]
                 )}
+                style={styles.helpLink}
               >
-                <Text style={styles.linkTxt}>❓ Comment trouver le cookie li_at ?</Text>
+                <Ionicons name="help-circle-outline" size={14} color={C.accent} />
+                <Text style={styles.linkTxt}>Comment trouver le cookie li_at ?</Text>
               </TouchableOpacity>
             </View>
           </FadeIn>
 
-          {/* ③ Notifications */}
+          {/* ③ Ciblage Géographique */}
           <FadeIn delay={120}>
             <View style={styles.card}>
-              <SectionHeader title="🔔  Notifications" />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <SectionHeader title="Ciblage géographique" subtitle="Zones surveillées" />
+                <TouchableOpacity style={styles.addBtn} onPress={() => Alert.alert('Configuration', 'L\'ajout de zone se fait via l\'interface de prospection.')}>
+                  <Text style={styles.addBtnTxt}>+ AJOUTER</Text>
+                </TouchableOpacity>
+              </View>
+              
+              {loadingZones ? (
+                <ActivityIndicator size="small" color={C.accent} style={{ marginVertical: 20 }} />
+              ) : zones.length === 0 ? (
+                <Text style={styles.emptyTxt}>Aucune zone configurée.</Text>
+              ) : (
+                zones.map(z => (
+                  <View key={z.id} style={styles.itemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemTitle}>{z.nom}</Text>
+                      <Text style={styles.itemSub}>{z.type === 'rayon' ? 'RADAR 50KM' : z.code_postal ? `CP ${z.code_postal}` : z.type.toUpperCase()}</Text>
+                    </View>
+                    <Switch
+                      value={z.active}
+                      onValueChange={() => toggleZone(z.id, z.active)}
+                      trackColor={{ false: C.border, true: C.accentMuted }}
+                      thumbColor={z.active ? C.accent : C.textTertiary}
+                    />
+                  </View>
+                ))
+              )}
+            </View>
+          </FadeIn>
+
+          {/* ④ Signaux d'affaires */}
+          <FadeIn delay={140}>
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <SectionHeader 
+                  title="Signaux d'affaires" 
+                  subtitle={currentPlan === 'free' 
+                    ? `Activez les événements (${Object.values(userSignaux).filter(Boolean).length}/2 actifs)` 
+                    : "Activez les événements à détecter"
+                  } 
+                />
+                {currentPlan === 'free' && (
+                  <View style={styles.limitBadge}>
+                    <Text style={styles.limitBadgeTxt}>
+                      {Object.values(userSignaux).filter(Boolean).length}/2 ACTIFS
+                    </Text>
+                  </View>
+                )}
+              </View>
+              {SIGNAUX_BIBLIOTHEQUE.map(s => {
+                const isActive = !!userSignaux[s.code];
+                const activeCount = Object.values(userSignaux).filter(Boolean).length;
+                
+                // New dynamic logic: 2 signals max for FREE
+                const isLocked = currentPlan === 'free' && !isActive && activeCount >= 2;
+                
+                // TEAM specific signals still locked for PRO
+                const isTeamLocked = currentPlan === 'pro' && s.plan_minimum === 'team' && !isActive;
+                
+                const finalLocked = isLocked || isTeamLocked;
+
+                return (
+                    <View key={s.code} style={styles.itemRow}>
+                      <View style={[styles.signalIcon, isActive && { backgroundColor: C.accent + "11" }]}>
+                        <Ionicons 
+                          name={s.icon as any} 
+                          size={18} 
+                          color={isActive ? C.accent : C.textTertiary} 
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.itemTitle, finalLocked && { color: C.textTertiary }]}>{s.nom}</Text>
+                        {finalLocked && <Ionicons name="lock-closed" size={10} color={C.textTertiary} />}
+                      </View>
+                      <Text style={styles.itemSub} numberOfLines={1}>{s.description.toUpperCase()}</Text>
+                    </View>
+                    <Switch
+                      value={isActive}
+                      onValueChange={() => {
+                        if (!isActive && finalLocked) {
+                          setShowPaywall(true);
+                          return;
+                        }
+                        toggleSignal(s.code);
+                      }}
+                      trackColor={{ false: C.border, true: C.accentMuted }}
+                      thumbColor={isActive ? C.accent : C.textTertiary}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          </FadeIn>
+
+          {/* ⑤ Notifications */}
+          <FadeIn delay={160}>
+            <View style={styles.card}>
+              <SectionHeader title="Notifications" />
               <ToggleRow
-                label="Alerter pour les leads chauds"
-                description={`Reçois une notification dès qu'une opportunité "Qualifié chaud" est détectée`}
+                label="Leads chauds"
+                description={`Alerte dès qu'une opportunité prioritare est détectée`}
                 value={settings.notifyHotLeads}
                 onChange={handleNotifToggle}
               />
               {Platform.OS === 'web' && (
                 <View style={styles.webNote}>
+                  <Ionicons name="warning-outline" size={14} color={C.warning} />
                   <Text style={styles.webNoteTxt}>
-                    ⚠️ Les notifications push ne sont pas disponibles sur le web.
+                    Notifications push indisponibles sur le web.
                   </Text>
                 </View>
               )}
             </View>
           </FadeIn>
 
-          <FadeIn delay={180}>
-            <View style={styles.versionRow}>
-              <Text style={styles.versionTxt}>Éloquence v1.0.0 · Scénographie France</Text>
+          <FadeIn delay={150}>
+            <View style={styles.dangerSection}>
+              <SectionHeader title="Zone de danger" />
+              <TouchableOpacity
+                onPress={async () => {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                  supabase.auth.signOut();
+                }}
+                style={styles.logoutBtn}
+              >
+                <Ionicons name="log-out-outline" size={18} color={C.danger} />
+                <Text style={styles.logoutBtnTxt}>Déconnexion</Text>
+              </TouchableOpacity>
             </View>
           </FadeIn>
 
-          <View style={{ height: 100 }} />
+          <FadeIn delay={180}>
+            <View style={styles.versionRow}>
+              <Text style={styles.versionTxt}>ÉLOQUENCE V1.0.0 · © 2026 GROUPE ASC</Text>
+            </View>
+          </FadeIn>
+
+          <View style={{ height: 180 }} />
         </ScrollView>
+
+        <Modal visible={showPaywall} animationType="slide" presentationStyle="pageSheet">
+          <PaywallScreen trigger="manual" onClose={() => setShowPaywall(false)} />
+        </Modal>
 
         {/* Save bar */}
         <View style={styles.saveBar}>
-          {saveError ? <Text style={styles.saveError}>{saveError}</Text> : null}
-          <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-            <TouchableOpacity
-              style={[styles.saveBtn, saved && styles.saveBtnSuccess, saving && { opacity: 0.5 }]}
-              onPress={handleSave}
-              activeOpacity={0.85}
-              disabled={saving}
-            >
-              <Text style={styles.saveBtnTxt}>
-                {saving ? 'Enregistrement...' : saved ? '✓ Enregistré' : 'Enregistrer'}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
+          <TouchableOpacity
+            style={[styles.saveBtn, saved && styles.saveBtnSuccess, saving && { opacity: 0.5 }]}
+            onPress={handleSave}
+            activeOpacity={0.85}
+            disabled={saving}
+          >
+            <Text style={styles.saveBtnTxt}>
+              {saving ? 'ENREGISTREMENT...' : saved ? 'ENREGISTRÉ' : 'ENREGISTRER'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -327,80 +578,157 @@ export default function SettingsScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.base },
+  container: { flex: 1, backgroundColor: C.base },
 
   header: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
   },
-  headerTitle: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xxl, color: Colors.textPrimary, letterSpacing: -0.4 },
-  headerSub: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 3 },
+  headerTitle: { fontFamily: 'Outfit_700Bold', fontSize: 28, color: C.textPrimary, letterSpacing: -0.6 },
+  headerSub: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textTertiary, marginTop: 2 },
 
-  scrollContent: { padding: Spacing.lg, gap: Spacing.lg },
+  planBadge: {
+    backgroundColor: C.elevated,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  planBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
+
+  scrollContent: { paddingHorizontal: 20, gap: 24 },
 
   card: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    borderWidth: 0.5,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: C.borderSubtle,
   },
 
-  sectionHeader: { gap: 3 },
-  sectionTitle: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.lg, color: Colors.textPrimary },
-  sectionSub: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 18 },
+  sectionHeader: { marginBottom: 16 },
+  sectionTitle: { fontFamily: 'Outfit_700Bold', fontSize: 11, color: C.textTertiary, letterSpacing: 1 },
+  sectionSub: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textSecondary, marginTop: 4, lineHeight: 18 },
 
-  fieldRow: { gap: 6 },
-  fieldLabel: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs, color: Colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' },
+  fieldRow: { marginBottom: 16 },
+  fieldLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 11, color: C.textSecondary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 },
   inputWrapper: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.elevated, borderRadius: Radius.md,
-    borderWidth: 0.5, borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.elevated,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 12,
   },
-  inputWrapperFocused: { borderColor: Colors.accent },
+  inputWrapperFocused: { borderColor: C.accent },
   input: {
     flex: 1,
-    fontFamily: 'Outfit_400Regular', fontSize: FontSize.md,
-    color: Colors.textPrimary,
-    paddingVertical: Platform.OS === 'ios' ? 12 : 10,
+    fontFamily: 'Outfit_400Regular',
+    fontSize: 15,
+    color: C.textPrimary,
+    paddingVertical: Platform.OS === 'ios' ? 14 : 10,
   },
-  eyeBtn: { padding: 6 },
-  eyeIcon: { fontSize: 15 },
+  eyeBtn: { padding: 8 },
 
-  divider: { height: 0.5, backgroundColor: Colors.border },
+  divider: { height: 1, backgroundColor: C.borderSubtle, marginVertical: 4, marginBottom: 16 },
 
-  hint: { backgroundColor: Colors.accentMuted, borderRadius: Radius.sm, padding: Spacing.sm, borderWidth: 0.5, borderColor: Colors.accent + '44' },
-  hintTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.accent, lineHeight: 17 },
+  hint: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.accentMuted, padding: 10, borderRadius: 8 },
+  hintTxt: { fontFamily: 'Outfit_400Regular', fontSize: 12, color: C.accent, flex: 1, lineHeight: 18 },
 
-  warningBanner: { backgroundColor: Colors.warningMuted, borderRadius: Radius.sm, padding: Spacing.sm, borderWidth: 0.5, borderColor: Colors.warning + '44' },
-  warningTxt: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs, color: Colors.warning, lineHeight: 17 },
+  warningBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.warningMuted, padding: 10, borderRadius: 8, marginBottom: 16 },
+  warningTxt: { fontFamily: 'Outfit_500Medium', fontSize: 12, color: C.warning, flex: 1 },
 
-  linkTxt: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.sm, color: Colors.accent },
+  helpLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  linkTxt: { fontFamily: 'Outfit_500Medium', fontSize: 13, color: C.accent },
 
-  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.xs },
-  toggleLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary, marginBottom: 2 },
-  toggleDesc: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 18 },
+  addBtn: { backgroundColor: C.elevated, paddingHorizontal: 10, paddingVertical: 6, borderRadius: Radius.pill, borderWidth: 1, borderColor: C.border },
+  addBtnTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
 
-  webNote: { backgroundColor: Colors.warningMuted, borderRadius: Radius.sm, padding: Spacing.sm },
-  webNoteTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.warning },
+  limitBadge: { backgroundColor: C.accentMuted, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  limitBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 9, color: C.accent, letterSpacing: 0.5 },
 
-  versionRow: { alignItems: 'center', paddingVertical: Spacing.sm },
-  versionTxt: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary, letterSpacing: 0.3 },
+    itemRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      gap: 12,
+    },
+    signalIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor: C.elevated,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      borderColor: C.border,
+    },    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: C.borderSubtle,
+  },
+  itemTitle: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.textPrimary },
+  itemSub: { fontFamily: 'Outfit_400Regular', fontSize: 10, color: C.textTertiary, letterSpacing: 0.5, marginTop: 2 },
+
+  emptyTxt: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textTertiary, textAlign: 'center', paddingVertical: 20 },
+
+  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  toggleLabel: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.textPrimary },
+  toggleDesc: { fontFamily: 'Outfit_400Regular', fontSize: 12, color: C.textSecondary, marginTop: 2, lineHeight: 16 },
+
+  webNoteTxt: { fontFamily: 'Outfit_400Regular', fontSize: 11, color: C.warning },
+
+  dangerSection: { gap: 12 },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.danger + '44',
+    backgroundColor: C.danger + '11',
+  },
+  logoutBtnTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: 15, color: C.danger },
+
+  versionRow: { alignItems: 'center', marginTop: 16 },
+    versionTxt: { fontFamily: "Outfit_400Regular", fontSize: 10, color: C.textTertiary, letterSpacing: 0.5, opacity: 0.8 },
 
   saveBar: {
-    backgroundColor: Colors.base,
-    borderTopWidth: 0.5, borderTopColor: Colors.border,
-    padding: Spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? 24 : Spacing.lg,
-    gap: 8,
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    backgroundColor: C.base,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 110 : 90, // Further increased to clear floating tab bar
+    borderTopWidth: 1,
+    borderTopColor: C.border,
   },
-  saveBtn: { backgroundColor: Colors.accent, borderRadius: Radius.md, paddingVertical: 14, alignItems: 'center' },
-  saveBtnSuccess: { backgroundColor: Colors.success },
-  saveBtnTxt: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.md, color: Colors.textPrimary },
-  saveError: { fontFamily: 'Outfit_500Medium', fontSize: FontSize.xs, color: Colors.danger, textAlign: 'center' },
+  saveBtn: { backgroundColor: C.textPrimary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  saveBtnSuccess: { backgroundColor: C.success },
+  saveBtnTxt: { fontFamily: 'Outfit_700Bold', fontSize: 14, color: C.base, letterSpacing: 0.5 },
+
+  // Plan card (legacy style adjusted)
+  planCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  planCardPro: { borderColor: C.accent, backgroundColor: C.accent + '11' },
+  planCardTeam: { borderColor: C.success, backgroundColor: C.success + '11' },
+  planName: { fontFamily: 'Outfit_700Bold', fontSize: 17, color: C.textPrimary },
+  planStatus: { fontFamily: 'Outfit_400Regular', fontSize: 11, color: C.textSecondary },
+  upgradeBtn: { backgroundColor: C.accent, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  upgradeBtnTxt: { fontFamily: 'Outfit_700Bold', fontSize: 11, color: '#FFF' },
+  limitHint: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  limitHintTxt: { fontFamily: 'Outfit_400Regular', fontSize: 11, color: C.textTertiary },
 });

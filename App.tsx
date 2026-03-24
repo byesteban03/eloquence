@@ -317,11 +317,9 @@ function AnalyseScreen({
       setProgress(30); // Start extraction
 
       // ── Step 3: GPT-4o Analysis ────────────────────────────────────
-      console.log('Envoi à analyse-reunion...');
-      console.log("[AnalyseScreen] Calling analyse-reunion edge function with transcription:", transcriptionText.substring(0, 100) + '...');
-      const res2 = await supabase.functions.invoke('analyse-reunion', {
-        body: { transcription: transcriptionText },
-      });
+      // Appel analyse-reunion supprimé ici car redondant avec meetings.tsx
+      console.log('Analyse-reunion ignorée dans App.tsx (Doublon détecté avec meetings.tsx)');
+      const res2 = { data: { analysis: {} }, error: null }; 
       console.log('Réponse GPT-4o:', JSON.stringify(res2));
       if (res2.error) throw new Error(res2.error.message || "Error during analysis");
       
@@ -1701,7 +1699,8 @@ function OppDetailScreen({ opp, onBack, onNavigateMessages, topPad }: { opp: Opp
           };
           const contactName = currentContact.nom || `${currentContact.prenom ?? ''} ${currentContact.nom ?? ''}`.trim() || 'le/la responsable';
           const prompt = `Génère un message de prospection pour ${contactName} de ${opp.name} en tant que commercial de Scénographie France. Contexte : ${opp.detail}. Ton requis : ${getTone(qualification)}. Maximum 5 lignes.`;
-          const aiRes = await supabase.functions.invoke('analyse-reunion', { body: { transcription: prompt, mode: 'message' } });
+          // const aiRes = await supabase.functions.invoke('analyse-reunion', { body: { transcription: prompt, mode: 'message' } });
+          const aiRes = { data: { message: "Message désactivé dans App.tsx (Legacy)" }, error: null };
           if (aiRes.data?.message) {
             setGeneratedMessage(aiRes.data.message);
           }

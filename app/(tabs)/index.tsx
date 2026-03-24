@@ -13,12 +13,20 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../lib/supabase';
 import { Colors, Spacing, Radius, FontSize, FontWeight, TypeColors, QualifColors } from '../../constants/tokens';
+import { EloquenceLogo } from '../../components/EloquenceLogo';
 
-import { WebView } from 'react-native-webview';
+// Only import MapView on native platforms (not web)
+let MapView: any = null;
+let Marker: any = null;
+if (Platform.OS !== 'web') {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,70 +46,65 @@ interface DashboardData {
   markers: ProspectMarker[];
 }
 
+// ─── Dark map style (Google Maps) ───────────────────────────────────────────
+
+const darkMapStyle = [
+  { elementType: 'geometry', stylers: [{ color: '#0E0E0F' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#888780' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0E0E0F' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#2A2A2E' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1E1E21' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#2A2A2E' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2A2A2E' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#161618' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
+
 // ─── Map Component ──────────────────────────────────────────────────────────
 
-function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
-  const mapHtml = `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style>
-          body { margin: 0; padding: 0; background-color: #0E0E0F; }
-          #map { height: 100vh; width: 100vw; background: #0E0E0F; }
-          .leaflet-container { background: #0E0E0F !important; }
-          .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
-          .leaflet-control-attribution { display: none; }
-        </style>
-      </head>
-      <body>
-        <div id="map"></div>
-        <script>
-          const map = L.map('map', { zoomControl: false }).setView([46.6033, 1.8883], 5);
-          
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-          const markers = ${JSON.stringify(markers)};
-          const group = L.featureGroup();
-
-          const colors = {
-            'Qualifié chaud': '#4ADE80',
-            'À contacter': '#3B82F6',
-            'Nouveau': '#F97316',
-            'default': '#6B7280'
-          };
-
-          markers.forEach(m => {
-            const color = colors[m.qualif] || colors.default;
-            if (m.lat && m.lng) {
-              const marker = L.circleMarker([m.lat, m.lng], {
-                radius: 6,
-                fillColor: color,
-                color: '#fff',
-                weight: 2,
-                opacity: 1,
-                fillOpacity: 0.9
-              }).addTo(map);
-              
-              marker.bindPopup('<b>' + m.nom + '</b><br>' + m.qualif);
-              group.addLayer(marker);
-            }
-          });
-
-          if (markers.length > 0) {
-            map.fitBounds(group.getBounds().pad(0.1));
-          }
-        </script>
-      </body>
-    </html>
-  `;
-
+function ProspectMap({ markers, onMarkerPress }: { markers: ProspectMarker[]; onMarkerPress?: (marker: ProspectMarker) => void }) {
+  // Web fallback: Leaflet iframe
   if (Platform.OS === 'web') {
+    const mapHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <style>
+            body { margin: 0; padding: 0; background-color: #0E0E0F; }
+            #map { height: 100vh; width: 100vw; background: #0E0E0F; }
+            .leaflet-container { background: #0E0E0F !important; }
+            .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+            .leaflet-control-attribution { display: none; }
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          <script>
+            const map = L.map('map', { zoomControl: false }).setView([46.6033, 1.8883], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            const markers = ${JSON.stringify(markers)};
+            const group = L.featureGroup();
+            const colors = { 'Qualifié chaud': '#4ADE80', 'À contacter': '#3B82F6', 'Nouveau': '#F97316', 'default': '#6B7280' };
+            markers.forEach(m => {
+              const color = colors[m.qualif] || colors.default;
+              if (m.lat && m.lng) {
+                const marker = L.circleMarker([m.lat, m.lng], { radius: 6, fillColor: color, color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.9 }).addTo(map);
+                marker.bindPopup('<b>' + m.nom + '</b><br>' + m.qualif);
+                group.addLayer(marker);
+              }
+            });
+            if (markers.length > 0) { map.fitBounds(group.getBounds().pad(0.1)); }
+          </script>
+        </body>
+      </html>
+    `;
     return (
       <View style={styles.mapContainer}>
-        <iframe 
+        <iframe
           srcDoc={mapHtml}
           style={{ width: '100%', height: '100%', border: 'none', borderRadius: 12 }}
           title="Prospect Map"
@@ -110,14 +113,41 @@ function LeafletMap({ markers }: { markers: ProspectMarker[] }) {
     );
   }
 
+  // Native: react-native-maps
+  const getMarkerColor = (qualif: string) => {
+    switch (qualif) {
+      case 'Qualifié chaud': return '#4ADE80';
+      case 'À contacter': return '#4F6EF7';
+      default: return '#F59E0B';
+    }
+  };
+
   return (
     <View style={styles.mapContainer}>
-      <WebView
-        originWhitelist={['*']}
-        source={{ html: mapHtml }}
-        style={{ flex: 1, backgroundColor: '#0E0E0F' }}
-        scrollEnabled={false}
-      />
+      <MapView
+        style={{ width: '100%', height: '100%' }}
+        customMapStyle={darkMapStyle}
+        initialRegion={{
+          latitude: 46.8,
+          longitude: 2.3,
+          latitudeDelta: 8,
+          longitudeDelta: 8,
+        }}
+      >
+        {markers
+          .filter(m => m.lat && m.lng)
+          .map(m => (
+            <Marker
+              key={m.id}
+              coordinate={{ latitude: m.lat, longitude: m.lng }}
+              pinColor={getMarkerColor(m.qualif)}
+              title={m.nom}
+              description={m.qualif}
+              onPress={() => onMarkerPress?.(m)}
+            />
+          ))
+        }
+      </MapView>
     </View>
   );
 }
@@ -290,8 +320,8 @@ export default function DashboardScreen() {
 
       setData({
         totalOpps:    opps.length,
-        hotOpps:      opps.filter(o => (o.score_pertinence ?? 0) >= 80).length,
-        totalMeetings: meetingsRes.data?.length ?? 0,
+        hotOpps:      opps.filter(o => o.qualification === 'Qualifié chaud').length,
+        totalMeetings: meetingsRes.count ?? 0,
         recentOpps:   opps.slice(0, 3),
         markers:      markers,
       });
@@ -301,13 +331,12 @@ export default function DashboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    (async () => {
+  useFocusEffect(
+    useCallback(() => {
       setLoading(true);
-      await loadData();
-      setLoading(false);
-    })();
-  }, []);
+      loadData().finally(() => setLoading(false));
+    }, [loadData])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -327,13 +356,13 @@ export default function DashboardScreen() {
         {/* ── Header ──────────────────────────────────────────────── */}
         <Animated.View style={[styles.header, anim0]}>
           <View>
-            <Text style={styles.greeting}>Bonjour, {userName}</Text>
+            <EloquenceLogo variant="horizontal" size={32} />
             <Text style={styles.date}>
               {dayName.charAt(0).toUpperCase() + dayName.slice(1)}, {dateStr}
             </Text>
           </View>
-          <View style={styles.logoBox}>
-            <Text style={styles.logoTxt}>SF</Text>
+          <View style={styles.greetingBox}>
+            <Text style={styles.greeting}>Bonjour, {userName}</Text>
           </View>
         </Animated.View>
 
@@ -369,7 +398,7 @@ export default function DashboardScreen() {
                <ActivityIndicator color={Colors.accent} />
             </View>
           ) : (
-            <LeafletMap markers={data?.markers ?? []} />
+            <ProspectMap markers={data?.markers ?? []} onMarkerPress={(m) => router.push('/(tabs)/prospecting')} />
           )}
           {/* Légende */}
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, justifyContent: 'center' }}>
@@ -469,10 +498,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
     marginBottom: Spacing.xs,
   },
-  greeting: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.xxl, color: Colors.textPrimary, letterSpacing: -0.4 },
-  date: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 3, textTransform: 'capitalize' },
-  logoBox: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.accent, alignItems: 'center', justifyContent: 'center' },
-  logoTxt: { fontFamily: 'Outfit_700Bold', fontSize: FontSize.sm, color: Colors.textPrimary, letterSpacing: 1 },
+  greeting: { fontFamily: 'Outfit_600SemiBold', fontSize: FontSize.sm, color: Colors.textSecondary, letterSpacing: -0.2 },
+  date: { fontFamily: 'Outfit_400Regular', fontSize: FontSize.xs, color: Colors.textTertiary, marginTop: 2, textTransform: 'capitalize' },
+  greetingBox: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.pill, backgroundColor: Colors.surface, borderWidth: 0.5, borderColor: Colors.border },
 
   // Error
   errorBanner: {

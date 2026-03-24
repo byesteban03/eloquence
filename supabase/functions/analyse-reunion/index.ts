@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
 }
 
 const SYSTEM_PROMPT = `Tu es l'assistant commercial de Scénographie France, agence de scénographie événementielle basée à Rennes (14 ans d'expérience, +1200 projets). Nos prestations : stands immersifs, scénographie événementielle, pop-up stores luxe, révélations automobiles, expositions muséographiques, soirées de gala, conventions entreprise. Clients références : Renault, Alpine, BYD, DS Automobiles, E.Leclerc, Groupama, Vieilles Charrues, Paris 2024, Westfield, Stade Rennais.

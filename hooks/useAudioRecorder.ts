@@ -84,7 +84,7 @@ export function useAudioRecorder() {
           throw new Error('Audio trop court ou vide');
         }
         
-        return { audioBase64, duration };
+        return { audioBase64, duration, uri };
       }
     } catch (err) {
       console.error('[useAudioRecorder] Failed to stop recording', err);
@@ -109,7 +109,8 @@ export function useAudioRecorder() {
         return {
           audioBase64,
           duration: null, // Depending on the audio API, duration might need external parsing
-          fileName: file.name
+          fileName: file.name,
+          uri: file.uri
         };
       }
     } catch (err) {

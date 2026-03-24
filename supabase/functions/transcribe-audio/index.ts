@@ -1,100 +1,207 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
-  console.log(`Incoming request: ${req.method} ${req.url}`);
+const MAX_WHISPER_SIZE = 24.5 * 1024 * 1024 // Restore to 24.5MB to skip ffmpeg on the user's 24.1MB file
 
+async function compressAudio(inputPath: string): Promise<string> {
+  const outputPath = inputPath.replace(/\.[^.]+$/, '_compressed.mp3')
+  
+  try {
+    const checkProcess = new Deno.Command('ffmpeg', { args: ['-version'] })
+    const { code } = await checkProcess.output()
+    if (code !== 0) throw new Error('ffmpeg not available')
+  } catch (e) {
+    console.error('[ffmpeg] binary not found in this environment')
+    throw new Error('La compression audio (ffmpeg) n\'est pas disponible dans cet environnement.')
+  }
+
+  console.log(`[ffmpeg] Compressing ${inputPath} to ${outputPath}...`)
+  const process = new Deno.Command('ffmpeg', {
+    args: ['-i', inputPath, '-ar', '16000', '-ac', '1', '-b:a', '32k', '-y', outputPath],
+    stderr: 'piped'
+  })
+  
+  const { code, stderr } = await process.output()
+  if (code !== 0) {
+    const errorMsg = new TextDecoder().decode(stderr)
+    throw new Error(`ffmpeg compression failed: ${errorMsg}`)
+  }
+  return outputPath
+}
+
+async function segmentAudio(inputPath: string, logTime: (tag: string) => void): Promise<string[]> {
+  const outputPattern = `/tmp/seg_%03d.m4a`
+  console.log(`[ffmpeg] Segmenting ${inputPath}...`)
+  
+  const process = new Deno.Command('ffmpeg', {
+    args: ['-i', inputPath, '-f', 'segment', '-segment_time', '600', '-c', 'copy', '-y', outputPattern],
+    stderr: 'piped'
+  })
+  
+  const { code, stderr } = await process.output()
+  if (code !== 0) {
+    const errorMsg = new TextDecoder().decode(stderr)
+    console.error('[ffmpeg] segmentation error:', errorMsg)
+    throw new Error(`ffmpeg segmentation failed: ${errorMsg}`)
+  }
+  
+  const segments: string[] = []
+  for await (const entry of Deno.readDir('/tmp')) {
+    if (entry.name.startsWith('seg_') && entry.name.endsWith('.m4a')) {
+      segments.push(`/tmp/${entry.name}`)
+    }
+  }
+  logTime(`Segmentation complete (${segments.length} segments)`)
+  return segments.sort()
+}
+
+async function transcribeSegment(
+  filePath: string, 
+  apiKey: string, 
+  mimeType: string, 
+  index: number
+): Promise<string> {
+  const fileData = await Deno.readFile(filePath)
+  const formData = new FormData()
+  const file = new File([fileData], `seg_${index}.m4a`, { type: mimeType })
+  formData.append('file', file)
+  formData.append('model', 'whisper-1')
+  formData.append('language', 'fr')
+
+  console.log(`[Whisper] Sending segment ${index} (${(fileData.length / 1024 / 1024).toFixed(1)} MB)...`)
+  
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Whisper Segment ${index} Error: ${response.status} - ${errorText}`)
+  }
+
+  const { text } = await response.json()
+  return text
+}
+
+serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    console.log('Handling OPTIONS request for CORS preflight.');
     return new Response('ok', { headers: corsHeaders })
   }
 
+  const startTime = Date.now()
+  const logTime = (tag: string) => console.log(`[Timer] ${tag}: ${Date.now() - startTime}ms`)
+  let tempInputPath = ""
+  let finalPath = ""
+  let segmentFiles: string[] = []
+
   try {
-    console.log('Attempting to parse request body as JSON.');
-    let { audioBase64, duration } = await req.json()
-    console.log('Body received. Audio base64 length:', audioBase64?.length ?? 'UNDEFINED', 'Duration:', duration);
-    
-    if (!audioBase64) {
-      console.error('Validation Error: Audio data (audioBase64) is missing from the request body.');
-      throw new Error('Audio data is missing');
-    }
+    const body = await req.json()
+    const { audioBase64, storagePath, mimeType = 'audio/m4a' } = body
 
-    // Strip data URL prefix if present
-    if (audioBase64.includes(';base64,')) {
-      console.log('Stripping data URL prefix from audioBase64.');
-      audioBase64 = audioBase64.split(';base64,').pop();
-    }
+    const tempId = crypto.randomUUID()
+    tempInputPath = `/tmp/${tempId}_input.m4a`
 
-    const openAiApiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!openAiApiKey) {
-      console.error('Configuration Error: OPENAI_API_KEY environment variable is missing.');
-      throw new Error('OPENAI_API_KEY environment variable is missing');
-    }
+    if (storagePath) {
+      console.log(`[Storage] Downloading: ${storagePath}`)
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+      if (!supabaseUrl || !supabaseKey) throw new Error('Supabase configuration missing')
 
-    const transcribeChunk = async (base64: string, index: number) => {
-      console.log(`Transcribing chunk ${index}. Base64 length: ${base64.length}`);
-      const binaryStr = atob(base64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
-      }
-      const audioBlob = new Blob([bytes], { type: 'audio/mpeg' });
-      const formData = new FormData();
-      formData.append('file', audioBlob, `audio_${index}.m4a`);
-      formData.append('model', 'whisper-1');
+      const supabaseClient = createClient(supabaseUrl, supabaseKey, {
+        auth: { persistSession: false },
+      })
 
-      const openAiApiUrl = 'https://api.openai.com/v1/audio/transcriptions';
-      const response = await fetch(openAiApiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openAiApiKey}`,
-        },
-        body: formData,
-      });
+      const { data, error } = await supabaseClient.storage.from('reunions-audio').download(storagePath)
+      if (error) throw new Error(`Storage download error: ${error.message}`)
 
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error?.message || `Error transcribing chunk ${index}`);
-      }
-      return result.text;
-    };
-
-    let fullTranscription = "";
-    const CHUNK_SIZE_CHARS = 20000000; // ~15MB of binary data per chunk
-
-    if (audioBase64.length > 33000000) {
-      console.log(`Large audio detected (${audioBase64.length} chars). Splitting into chunks...`);
-      const chunks: string[] = [];
-      for (let i = 0; i < audioBase64.length; i += CHUNK_SIZE_CHARS) {
-        chunks.push(audioBase64.slice(i, i + CHUNK_SIZE_CHARS));
-      }
-      console.log(`Split into ${chunks.length} chunks.`);
-
-      for (let i = 0; i < chunks.length; i++) {
-        const text = await transcribeChunk(chunks[i], i);
-        fullTranscription += (fullTranscription ? " " : "") + text;
-      }
+      const file = await Deno.open(tempInputPath, { create: true, write: true })
+      await data.stream().pipeTo(file.writable)
+      logTime('File downloaded to disk')
+    } else if (audioBase64) {
+      const base64Data = audioBase64.includes(';base64,') ? audioBase64.split(';base64,').pop()! : audioBase64
+      const fileData = decode(base64Data)
+      await Deno.writeFile(tempInputPath, fileData)
+      logTime('Base64 decoded to disk')
     } else {
-      fullTranscription = await transcribeChunk(audioBase64, 0);
+      throw new Error('Neither storagePath nor audioBase64 provided')
     }
 
-    console.log('Transcription successful. Total text length:', fullTranscription.length);
+    const fileStat = await Deno.stat(tempInputPath)
+    const fileSize = fileStat.size
+    console.log(`[Process] Input file size: ${(fileSize / 1024 / 1024).toFixed(1)} MB`)
+
+    finalPath = tempInputPath
+    let finalMime = mimeType
+
+    // Compression logic (only for massive files now)
+    if (fileSize > MAX_WHISPER_SIZE) {
+      console.log(`[Process] File > 25MB. Compressing...`)
+      try {
+        finalPath = await compressAudio(tempInputPath)
+        finalMime = 'audio/mpeg'
+        logTime('Compression complete')
+      } catch (err) {
+        console.warn(`[Process] Compression failed:`, err)
+      }
+    }
+
+    const apiKey = Deno.env.get('OPENAI_API_KEY')
+    if (!apiKey) throw new Error('OPENAI_API_KEY not configured')
+
+    // SPLIT AND TRANSCRIBE PARALLEL
+    segmentFiles = await segmentAudio(finalPath, logTime)
+    
+    console.log(`[Process] Transcribing ${segmentFiles.length} segments in parallel...`)
+    const transcriptionPromises = segmentFiles.map((path, idx) => 
+      transcribeSegment(path, apiKey, finalMime, idx)
+    )
+    
+    const results = await Promise.all(transcriptionPromises)
+    const combinedText = results.join(' ')
+    logTime('All segments transcribed')
+
+    // Cleanup
+    const cleanup = async () => {
+      try {
+        if (tempInputPath) await Deno.remove(tempInputPath)
+        if (finalPath && finalPath !== tempInputPath) await Deno.remove(finalPath)
+        for (const f of segmentFiles) await Deno.remove(f)
+      } catch (e) { console.warn('Cleanup error:', e) }
+    }
+    await cleanup()
+
     return new Response(
-      JSON.stringify({ 
-        transcription: fullTranscription,
-        duration: duration 
-      }),
+      JSON.stringify({ transcription: combinedText }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
-  } catch (error) {
-    console.error("Transcription Process Error:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+
+  } catch (e: any) {
+    console.error('Error in transcribe-audio:', e)
+    try {
+      if (tempInputPath) await Deno.remove(tempInputPath)
+      if (finalPath && finalPath !== tempInputPath) await Deno.remove(finalPath)
+      for (const f of segmentFiles) await Deno.remove(f)
+    } catch (_) {}
+
+    return new Response(
+      JSON.stringify({ 
+        error: 'Edge Function Error', 
+        message: e.message || String(e),
+        timer: Date.now() - startTime
+      }),
+      { 
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
+    )
   }
 })
+

@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Colors, FontSize, FontWeight } from '../../constants/tokens';
+import { EloquenceLogo } from '../../components/EloquenceLogo';
 
 export default function TabsLayout() {
   return (
@@ -23,10 +24,8 @@ export default function TabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => (
-            <View style={styles.iconBox}>
-              <View style={[styles.iBar, { width: 16, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
-              <View style={[styles.iBar, { width: 11, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
-              <View style={[styles.iBar, { width: 14, backgroundColor: focused ? Colors.accent : Colors.textSecondary }]} />
+            <View style={[styles.iconBox, { opacity: focused ? 1 : 0.6 }]}>
+              <EloquenceLogo variant="icon" size={28} />
             </View>
           ),
         }}

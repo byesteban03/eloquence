@@ -14,6 +14,7 @@ import {
   StatusBar,
   RefreshControl,
   Easing,
+  Platform,
 } from 'react-native';
 import { Colors, Spacing, Radius, FontSize, FontWeight, scoreStyle } from '../../constants/tokens';
 import { supabase } from '../../lib/supabase';
@@ -21,12 +22,38 @@ import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Audio } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { usePlan } from '../../hooks/usePlan';
+import PaywallScreen from '../paywall';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+// OpenAI Whisper limit is exactly 25MB.
+// 25MB raw data = (25 * 1024 * 1024 * 4 / 3) = ~34,952,533 chars.
+// We set to 35M to be safe for files around the limit.
+const MAX_BASE64_CHUNK = 35 * 1024 * 1024; 
+
+
+function getTranscriptionMessage(durationMs: number | null, fileSizeEstimate?: number): string {
+  let seconds = 0;
+  if (durationMs) {
+    seconds = durationMs / 1000;
+  } else if (fileSizeEstimate) {
+    // ~1 MB par minute pour du M4A 128kbps -> 1024*1024 bytes = 60s
+    // 1 byte = 60 / (1024*1024) seconds
+    seconds = fileSizeEstimate * (60 / (1024 * 1024));
+  }
+
+  if (seconds < 5 * 60) {
+    return 'Transcription en cours...';
+  } else if (seconds < 15 * 60) {
+    return 'Transcription en cours... (peut prendre 30 secondes)';
+  } else {
+    return 'Longue réunion détectée — transcription en plusieurs passes...';
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -341,6 +368,13 @@ export default function MeetingsScreen() {
   const [processingState, setProcessingState] =
     useState<'idle' | 'recording' | 'importing' | 'transcribing' | 'analyzing' | 'saving'>('idle');
   const [processingError, setProcessingError] = useState<string | null>(null);
+  const [transcriptionMessage, setTranscriptionMessage] = useState<string>('');
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [paywallTrigger, setPaywallTrigger] = useState<'analyse_limit' | 'manual'>('manual');
+  const [processingDuration, setProcessingDuration] = useState<number | null>(null);
+  const [processingSize, setProcessingSize] = useState<number>(0);
+
+  const { plan, canAnalyse, getRemainingAnalyses, incrementAnalyses, loading: planLoading } = usePlan();
 
   const { isRecording, duration, startRecording, stopRecording, importAudio } = useAudioRecorder();
 
@@ -401,30 +435,140 @@ export default function MeetingsScreen() {
     setRefreshing(false);
   };
 
-  // ── Processing pipeline ────────────────────────────────────────────────────
+  async function sendChunkToWhisper(
+    audioBase64: string,
+    chunkIndex: number,
+    totalChunks: number
+  ): Promise<string> {
+    console.log(`[sendChunk] Chunk ${chunkIndex + 1}/${totalChunks}`);
 
-  const processAudio = async (audioBase64: string, audioDuration: number | null) => {
+    // Conversion base64 -> Blob (User's provided logic)
+    const byteCharacters = atob(audioBase64);
+    const byteNumbers = new Uint8Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const blob = new Blob([byteNumbers], { type: 'audio/m4a' });
+
+    const formData = new FormData();
+    // @ts-ignore - blob is fine for fetch in React Native
+    formData.append('file', blob, `chunk_${chunkIndex}.m4a`);
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'fr');
+
+    const allKeys = await AsyncStorage.getAllKeys();
+    console.log('[AsyncStorage] All keys:', allKeys);
+
+    let openaiKey = null;
+    const settingsRaw = await AsyncStorage.getItem('eloquence:settings:v1');
+    if (settingsRaw) {
+      try {
+        const settings = JSON.parse(settingsRaw);
+        openaiKey = settings.openaiKey;
+      } catch (err) {
+        console.error('[sendChunk] Settings parse error:', err);
+      }
+    }
+
+    if (!openaiKey) {
+      throw new Error('Clé OpenAI manquante — configurez-la dans Paramètres');
+    }
+
+    const response = await fetch(
+      'https://api.openai.com/v1/audio/transcriptions',
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}` },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Whisper ${response.status}: ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log(`[sendChunk] OK: ${result.text?.length} chars`);
+    return result.text;
+  }
+
+  const processAudio = async (uri: string, audioDuration: number | null) => {
     setProcessingError(null);
     try {
       setProcessingState('transcribing');
-      const { data: transData, error: transError } = await supabase.functions.invoke('transcribe-audio', {
-        body: { audioBase64, duration: audioDuration }
-      });
-      if (transError) throw new Error(transError.message);
-      const transcription: string = transData.transcription;
-      if (!transcription) throw new Error('Transcription vide reçue');
+      setProcessingDuration(audioDuration);
+      
+      // 1. Lire le fichier localement
+      let base64 = '';
+      let fileSize = 0;
 
+      if (Platform.OS === 'web') {
+        setTranscriptionMessage('Lecture du fichier (Web)...');
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        fileSize = blob.size;
+        setProcessingSize(fileSize);
+        
+        base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            // OpenAI attend du base64 pur, on enlève le préfixe data:...;base64,
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        if (fileInfo.exists) {
+          fileSize = fileInfo.size;
+          setProcessingSize(fileSize);
+        }
+
+        setTranscriptionMessage('Lecture du fichier...');
+        base64 = await FileSystem.readAsStringAsync(uri, { 
+          encoding: FileSystem.EncodingType.Base64 
+        });
+      }
+
+      // 2. Découpage en morceaux (OpenAI limite à 25MB, on prend 2MB de base64 pour être sûr)
+      const totalChars = base64.length;
+      const chunks: string[] = [];
+      for (let i = 0; i < totalChars; i += MAX_BASE64_CHUNK) {
+        chunks.push(base64.substring(i, i + MAX_BASE64_CHUNK));
+      }
+
+      setTranscriptionMessage(getTranscriptionMessage(audioDuration, fileSize));
+      
+      const results: string[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        setTranscriptionMessage(`Transcription chunk ${i + 1}/${chunks.length}...`);
+        const text = await sendChunkToWhisper(chunks[i], i, chunks.length);
+        results.push(text);
+      }
+      
+      const transcription = results.join(' ').trim();
+      if (!transcription) throw new Error('La transcription est vide.');
+
+      // 3. Analyse GPT-4o (Toujours via Edge Function car elle est rapide et n'a pas besoin de ffmpeg)
+      setTranscriptionMessage('Analyse en cours...');
       setProcessingState('analyzing');
       const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyse-reunion', {
         body: { transcription }
       });
-      if (analysisError) throw new Error(analysisError.message);
+      if (analysisError) throw new Error((analysisError as any).message);
+      
       const analysisResult = analysisData;
       const analysis = analysisResult.analysis;
       const opportunite_id = analysisResult.opportunite_id || null;
       if (!analysis) throw new Error('Analyse vide reçue');
 
       setProcessingState('saving');
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log('[Supabase] Authenticated User ID:', user?.id);
+      
       const { data: savedData, error: saveError } = await supabase
         .from('reunions')
         .insert([{
@@ -439,12 +583,6 @@ export default function MeetingsScreen() {
           plan_action:                    analysis.plan_action,
           propositions_techniques:        analysis.propositions_techniques,
           email_suivi:                    analysis.email_suivi,
-          budget_detecte:                 analysis.budget_detecte,
-          deadline_detectee:              analysis.deadline_detectee,
-          mots_cles:                      analysis.mots_cles,
-          decideurs:                      analysis.decideurs_identifies,
-          concurrents:                    analysis.concurrents_mentionnes,
-          // Nouveaux champs IA avancés
           resume_tweet:                   analysis.resume_tweet,
           ton_prospect:                   analysis.ton_prospect,
           objections_verbatim:            analysis.objections_verbatim,
@@ -454,20 +592,27 @@ export default function MeetingsScreen() {
           coherence_discours:             analysis.coherence_discours,
           prochaine_action_prioritaire:   analysis.prochaine_action_prioritaire,
           opportunite_id,
+          user_id:                        user?.id,
         }])
         .select()
         .single();
 
-      if (saveError) throw new Error(saveError.message);
+      if (saveError) {
+        console.error('[Supabase] Insert error details:', saveError);
+        const msg = saveError.message;
+        if (msg.includes('schema cache')) {
+          throw new Error('Erreur de cache Supabase : Veuillez rafraîchir le schéma PostgREST dans votre dashboard (SQL: NOTIFY pgrst, \'reload schema\';)');
+        }
+        throw new Error(`Erreur lors de la sauvegarde : ${msg}`);
+      }
 
-      // ─ Planifier notification si prochaine action a une date ────────────────
+      // Notification planning...
       if (analysis.prochaine_action_prioritaire?.date_suggeree && savedData?.id) {
         try {
           const actionDate = new Date(analysis.prochaine_action_prioritaire.date_suggeree);
           const now = new Date();
           const diffMs = actionDate.getTime() - now.getTime();
-          const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-          if (diffMs > 0 && diffMs <= thirtyDaysMs) {
+          if (diffMs > 0 && diffMs <= 30 * 24 * 60 * 60 * 1000) {
             await supabase.functions.invoke('schedule-notification', {
               body: {
                 title: `Relance — ${analysis.prospect_nom}`,
@@ -477,11 +622,10 @@ export default function MeetingsScreen() {
               }
             });
           }
-        } catch (notifErr) {
-          console.warn('Notification non planifiée (non bloquant):', notifErr);
-        }
+        } catch (notifErr) { console.warn('Notification skip', notifErr); }
       }
 
+      await incrementAnalyses();
       setMeetings(prev => [savedData, ...prev]);
       setSelectedMeeting(savedData);
       setShowRecorder(false);
@@ -490,10 +634,16 @@ export default function MeetingsScreen() {
       setProcessingError(err.message ?? 'Erreur lors du traitement');
     } finally {
       setProcessingState('idle');
+      setTranscriptionMessage('');
     }
   };
 
   const handleStartRecording = async () => {
+    if (!canAnalyse()) {
+      setPaywallTrigger('analyse_limit');
+      setShowPaywall(true);
+      return;
+    }
     setProcessingState('recording');
     setProcessingError(null);
     await startRecording();
@@ -506,10 +656,15 @@ export default function MeetingsScreen() {
       setProcessingError('Enregistrement échoué ou trop court.');
       return;
     }
-    await processAudio(result.audioBase64, result.duration);
+    await processAudio(result.uri, result.duration);
   };
 
   const handleImport = async () => {
+    if (!canAnalyse()) {
+      setPaywallTrigger('analyse_limit');
+      setShowPaywall(true);
+      return;
+    }
     setProcessingError(null);
     setProcessingState('importing');
     const result = await importAudio();
@@ -517,7 +672,8 @@ export default function MeetingsScreen() {
       setProcessingState('idle');
       return;
     }
-    await processAudio(result.audioBase64, null);
+
+    await processAudio(result.uri, null);
   };
 
   const formatDuration = (ms: number) => {
@@ -533,7 +689,9 @@ export default function MeetingsScreen() {
     const text = `Compte rendu : ${selectedMeeting.prospect_nom}\nScore: ${selectedMeeting.score_global}\n\nBesoins détectés :\n${(selectedMeeting.besoins || []).map(b => `• ${b}`).join('\n')}\n\nPlan d'action :\n${(selectedMeeting.plan_action || []).map((step, i) => `${i + 1}. ${step}`).join('\n')}\n\nEmail de suivi :\nObjet : ${selectedMeeting.email_suivi?.objet || ''}\n${selectedMeeting.email_suivi?.corps || ''}`;
     try {
       if (await Sharing.isAvailableAsync()) {
-        const fileUri = FileSystem.cacheDirectory + 'Compte_Rendu.txt';
+        // @ts-ignore
+        const cacheDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
+        const fileUri = cacheDir + 'Compte_Rendu.txt';
         await FileSystem.writeAsStringAsync(fileUri, text);
         await Sharing.shareAsync(fileUri, { UTI: 'public.plain-text', dialogTitle: 'Partager le compte rendu' });
       }
@@ -551,12 +709,30 @@ export default function MeetingsScreen() {
         <View>
           <Text style={styles.headerTitle}>Réunions</Text>
           <Text style={styles.headerSub}>Intelligence conversationnelle</Text>
+          {plan !== 'team' && !planLoading && (
+            <View style={styles.limitBadge}>
+              <Text style={styles.limitText}>
+                {getRemainingAnalyses()} {getRemainingAnalyses() > 1 ? 'analyses restantes' : 'analyse restante'} ce mois
+              </Text>
+            </View>
+          )}
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.headerBtn} onPress={() => { setShowRecorder(true); handleImport(); }}>
+          <TouchableOpacity style={styles.headerBtn} onPress={handleImport}>
             <Ionicons name="document-attach-outline" size={18} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.headerBtn, { backgroundColor: Colors.accent, borderColor: Colors.accent }]} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowRecorder(true); }}>
+          <TouchableOpacity 
+            style={[styles.headerBtn, { backgroundColor: Colors.accent, borderColor: Colors.accent }]} 
+            onPress={() => { 
+              if (canAnalyse()) {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); 
+                setShowRecorder(true); 
+              } else {
+                setPaywallTrigger('analyse_limit');
+                setShowPaywall(true);
+              }
+            }}
+          >
             <Ionicons name="add" size={20} color={Colors.textPrimary} />
           </TouchableOpacity>
         </View>
@@ -635,7 +811,22 @@ export default function MeetingsScreen() {
                   <ActivityIndicator size="small" color={Colors.accent} />
                   <Text style={styles.processingTxt}>
                     {processingState === 'importing'     && 'Importation du fichier...'}
-                    {processingState === 'transcribing'  && 'Transcription Whisper en cours...'}
+                    {processingState === 'transcribing'  && (
+                      <View style={{ alignItems: 'center', gap: 12 }}>
+                        <ActivityIndicator size="large" color={Colors.accent} />
+                        <Text style={{
+                          fontSize: 13,
+                          fontFamily: 'Outfit_400Regular', 
+                          color: Colors.textSecondary,
+                          textAlign: 'center',
+                        }}>
+                          {transcriptionMessage || getTranscriptionMessage(
+                            processingDuration,
+                            processingSize
+                          )}
+                        </Text>
+                      </View>
+                    )}
                     {processingState === 'analyzing'     && 'Analyse GPT-4o en cours...'}
                     {processingState === 'saving'        && 'Sauvegarde...'}
                   </Text>
@@ -671,6 +862,17 @@ export default function MeetingsScreen() {
                   <Ionicons name="document-attach-outline" size={16} color={Colors.accent} />
                   <Text style={styles.importBtnTxt}>Importer un fichier audio</Text>
                 </TouchableOpacity>
+              )}
+              {!isRecording && !isProcessing && (
+                <Text style={{
+                  fontSize: 11,
+                  fontFamily: 'Outfit_400Regular',
+                  color: Colors.textTertiary,
+                  textAlign: 'center',
+                  marginTop: -10, // Pull it closer to the import button
+                }}>
+                  Fichiers jusqu'à 500 MB · Réunions jusqu'à 3h
+                </Text>
               )}
             </View>
           </View>
@@ -1048,6 +1250,21 @@ const styles = StyleSheet.create({
     width: 40, height: 40, borderRadius: Radius.md,
     backgroundColor: Colors.elevated, borderWidth: 0.5, borderColor: Colors.border,
     alignItems: 'center', justifyContent: 'center',
+  },
+  limitBadge: {
+    marginTop: 4,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: Radius.sm,
+    borderWidth: 0.5,
+    borderColor: Colors.border,
+    alignSelf: 'flex-start',
+  },
+  limitText: {
+    fontFamily: 'Outfit_500Medium',
+    fontSize: 10,
+    color: Colors.textTertiary,
   },
 
   // Error
