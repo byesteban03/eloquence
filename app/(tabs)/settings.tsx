@@ -103,8 +103,10 @@ function FadeIn({ delay = 0, children }: { delay?: number; children: React.React
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
-      {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+        {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -584,16 +586,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingTop: 12,
     paddingBottom: 20,
     backgroundColor: C.base,
     borderBottomWidth: 1,
     borderBottomColor: C.borderSubtle,
   },
-  title: {
+  headerTitle: {
     fontFamily: 'Outfit_700Bold',
-    fontSize: 24,
+    fontSize: 28,
     color: C.textPrimary,
+    letterSpacing: -0.6,
+  },
+  headerSub: {
+    fontFamily: 'Outfit_400Regular',
+    fontSize: 13,
+    color: C.textTertiary,
+    marginTop: 2,
   },
   planBadge: {
     backgroundColor: C.elevated,
@@ -604,6 +613,30 @@ const styles = StyleSheet.create({
     borderColor: C.border,
   },
   planBadgeTxt: { fontFamily: 'Outfit_700Bold', fontSize: 10, color: C.textSecondary, letterSpacing: 0.5 },
+
+  sectionSub: { fontFamily: 'Outfit_400Regular', fontSize: 13, color: C.textSecondary, marginTop: 4 },
+  fieldRow: { marginBottom: 20 },
+  fieldLabel: { fontFamily: 'Outfit_700Bold', fontSize: 11, color: C.textTertiary, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.elevated,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+  },
+  inputWrapperFocused: { borderColor: C.accent },
+  input: {
+    flex: 1,
+    fontFamily: 'Outfit_400Regular',
+    fontSize: 15,
+    color: C.textPrimary,
+    height: '100%',
+  },
+  eyeBtn: { padding: 8 },
+  divider: { height: 1, backgroundColor: C.borderSubtle, marginVertical: 16 },
   scrollContent: {
     padding: 20,
     paddingBottom: 150,
